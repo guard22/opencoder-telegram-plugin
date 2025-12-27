@@ -134,9 +134,7 @@ function isSessionIdleEvent(event) {
 var TelegramNotify = async ({ client, directory }) => {
   const logger = createLogger(client);
   if (!isConfigured()) {
-    await logger.error(
-      "Plugin not configured. Please replace INSTALL_KEY and WORKER_URL placeholders."
-    );
+    logger.error("Plugin not configured. Please replace INSTALL_KEY and WORKER_URL placeholders.");
     return {
       event: async () => {
       }
