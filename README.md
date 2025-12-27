@@ -58,9 +58,8 @@ pnpm install
 
 # Create KV namespace
 wrangler kv namespace create "USERS"
-wrangler kv namespace create "USERS" --preview
 
-# Add KV IDs to worker/wrangler.jsonc
+# Add KV ID to worker/wrangler.jsonc
 
 # Set bot token
 wrangler secret put BOT_TOKEN
@@ -111,7 +110,6 @@ Copy `.env.example` to `.env.local` and fill in the required values:
 |----------|-------------|
 | `BOT_TOKEN` | Telegram bot token from @BotFather |
 | `KV_NAMESPACE_ID` | Cloudflare KV namespace ID |
-| `KV_PREVIEW_NAMESPACE_ID` | Cloudflare KV preview namespace ID |
 | `CLOUDFLARE_ACCOUNT_ID` | Your Cloudflare account ID |
 | `WORKER_URL` | Worker URL (available after first deployment) |
 
