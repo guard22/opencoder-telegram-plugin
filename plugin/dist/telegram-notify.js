@@ -11,38 +11,18 @@ function isConfigured() {
   return !INSTALL_KEY.startsWith("__") && !WORKER_URL.startsWith("__");
 }
 
-// src/features/session/service.ts
-async function getSessionById(client, logger, sessionId) {
-  const response = await client.session.get({
-    path: { id: sessionId }
-  });
-  if (response.error) {
-    logger.error(`Error getting session: ${JSON.stringify(response.error)}`);
-    return null;
-  }
-  logger.debug("Session details", { session: response.data });
-  return response.data;
-}
-async function getLatestSession(client, logger) {
-  const listResponse = await client.session.list();
-  if (listResponse.error) {
-    logger.error(`Error listing sessions: ${JSON.stringify(listResponse.error)}`);
-    return null;
-  }
-  logger.debug("Sessions list", { count: listResponse.data?.length });
-  const sessions = listResponse.data;
-  if (!sessions || sessions.length === 0) {
-    return null;
-  }
-  const latestSession = sessions[0];
-  return getSessionById(client, logger, latestSession.id);
-}
+// src/features/session/utils/get-session-info.ts
 async function getSessionInfo(client, logger, sessionId) {
   try {
-    if (sessionId) {
-      return getSessionById(client, logger, sessionId);
+    const response = await client.session.get({
+      path: { id: sessionId }
+    });
+    if (response.error) {
+      logger.error(`Error getting session: ${JSON.stringify(response.error)}`);
+      return null;
     }
-    return getLatestSession(client, logger);
+    logger.debug("Session details", { session: response.data });
+    return response.data;
   } catch (error) {
     const errorMessage = error instanceof Error ? error.message : "Unknown error";
     const errorStack = error instanceof Error ? error.stack : "";
@@ -58,11 +38,9 @@ async function sendNotification(client, logger, projectName, sessionId) {
     const sessionInfo = await getSessionInfo(client, logger, sessionId);
     const payload = {
       key: INSTALL_KEY,
-      project: projectName
+      project: projectName,
+      sessionTitle: sessionInfo?.title ?? void 0
     };
-    if (sessionInfo?.title) {
-      payload.sessionTitle = sessionInfo.title;
-    }
     logger.debug("Sending payload", { payload });
     const response = await fetch(`${WORKER_URL}/notify`, {
       method: "POST",
@@ -113,9 +91,6 @@ function extractProjectName(directory) {
 }
 
 // src/telegram-notify.ts
-function isSessionIdleEvent(event) {
-  return event.type === "session.idle";
-}
 var TelegramNotify = async ({ client, directory }) => {
   const logger = createLogger(client);
   if (!isConfigured()) {
@@ -128,7 +103,7 @@ var TelegramNotify = async ({ client, directory }) => {
   const projectName = extractProjectName(directory);
   return {
     event: async ({ event }) => {
-      if (isSessionIdleEvent(event)) {
+      if (event.type === "session.idle") {
         await sendNotification(client, logger, projectName, event.properties.sessionID);
       }
     }

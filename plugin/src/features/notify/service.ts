@@ -1,14 +1,14 @@
 import { INSTALL_KEY, WORKER_URL } from "../../lib/config";
 import type { Logger } from "../../lib/logger";
 import type { OpencodeClient } from "../../lib/types";
-import { getSessionInfo } from "../session/service";
+import { getSessionInfo } from "../session/utils/get-session-info";
 import type { NotifyPayload } from "./types";
 
 export async function sendNotification(
   client: OpencodeClient,
   logger: Logger,
   projectName: string,
-  sessionId: string | undefined,
+  sessionId: string,
 ): Promise<void> {
   try {
     logger.debug("Session ID from event", { sessionId });
@@ -18,11 +18,8 @@ export async function sendNotification(
     const payload: NotifyPayload = {
       key: INSTALL_KEY,
       project: projectName,
+      sessionTitle: sessionInfo?.title ?? undefined,
     };
-
-    if (sessionInfo?.title) {
-      payload.sessionTitle = sessionInfo.title;
-    }
 
     logger.debug("Sending payload", { payload });
 
