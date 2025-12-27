@@ -40,7 +40,7 @@ Hey ${username}! You already have an install key.
 ${installCommand}
 \`\`\`
 
-Use /revoke to generate a new key if needed.
+Use /revoke to revoke your key if needed.
 `.trim(),
         { parse_mode: "Markdown" },
       );
@@ -65,7 +65,7 @@ ${installCommand}
 After installation, you'll receive a notification whenever OpenCode finishes a task.
 
 Commands:
-/revoke - Generate a new install key (invalidates old one)
+/revoke - Revoke your current key
 /status - Check your installation status
 /help - Show help message
 `.trim(),
@@ -76,28 +76,16 @@ Commands:
   // /revoke command
   bot.command("revoke", async (ctx) => {
     const chatId = ctx.chat.id;
-    const username = ctx.from?.username || "N/A";
 
     const existing = await findUserKeyByChatId(ctx.env.USERS, chatId);
     if (existing) {
       await deleteUser(ctx.env.USERS, existing.key);
+      await ctx.reply(
+        "Your key has been revoked. Your plugin will stop working.\n\nUse /start to generate a new key.",
+      );
+    } else {
+      await ctx.reply("You don't have an active key to revoke. Use /start to generate one.");
     }
-
-    const installKey = generateInstallKey();
-    await createUser(ctx.env.USERS, installKey, { chatId, username });
-
-    const installCommand = buildInstallCommand(installKey);
-    await ctx.reply(
-      `Your old key has been revoked.
-
-*Run this command to reinstall:*
-\`\`\`bash
-${installCommand}
-\`\`\`
-
-Your old plugin will stop working.`,
-      { parse_mode: "Markdown" },
-    );
   });
 
   // /status command
@@ -123,7 +111,7 @@ Your old plugin will stop working.`,
 
 Commands:
 /start - Get installation command
-/revoke - Generate new key (invalidates old one)
+/revoke - Revoke your current key
 /status - Check installation status
 /help - Show this message
 
