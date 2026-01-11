@@ -27,16 +27,22 @@ export function createTelegramBot(
   logger: Logger,
   sessionStore: SessionStore,
 ): TelegramBotManager {
+  console.log("[Bot] createTelegramBot called");
   if (botInstance) {
+    console.log("[Bot] Reusing existing bot instance");
     logger.warn("Bot already initialized, reusing existing instance");
     return createBotManager(botInstance, config);
   }
 
+  console.log("[Bot] Creating new Bot instance with token");
   const bot = new Bot(config.botToken);
   botInstance = bot;
+  console.log("[Bot] Bot instance created");
 
+  console.log("[Bot] Setting up middleware and handlers...");
   bot.use(async (ctx, next) => {
     if (!isUserAllowed(ctx, config.allowedUserIds)) {
+      console.log(`[Bot] Unauthorized access attempt from user ${ctx.from?.id}`);
       logger.warn("Unauthorized user attempted access", { userId: ctx.from?.id });
       return;
     }
@@ -44,6 +50,7 @@ export function createTelegramBot(
   });
 
   bot.command("new", async (ctx) => {
+    console.log("[Bot] /new command received");
     if (ctx.chat?.id !== config.groupId) return;
 
     try {
@@ -76,10 +83,12 @@ export function createTelegramBot(
   });
 
   bot.on("message:text", async (ctx) => {
+    console.log(`[Bot] Text message received: "${ctx.message.text?.slice(0, 50)}..."`);
     if (ctx.chat?.id !== config.groupId) return;
     if (ctx.message.text?.startsWith("/")) return;
 
     const topicId = ctx.message.message_thread_id;
+    console.log(`[Bot] Message in topic: ${topicId}`);
     if (!topicId) {
       const userMessage = ctx.message.text;
       await ctx.reply(`Nothing I can do with this ${userMessage}`);
@@ -144,45 +153,65 @@ export function createTelegramBot(
   });
 
   bot.catch((error) => {
+    console.error("[Bot] Bot error caught:", error);
     logger.error("Bot error", { error: String(error) });
   });
 
+  console.log("[Bot] All handlers registered, creating bot manager");
   return createBotManager(bot, config);
 }
 
 function createBotManager(bot: Bot, config: Config): TelegramBotManager {
   return {
     async start() {
+      console.log("[Bot] start() called - beginning long polling...");
       await bot.start({
         drop_pending_updates: true,
         onStart: async () => {
-          console.log("Telegram bot started");
+          console.log("[Bot] Telegram bot polling started successfully");
           try {
             await sendTemporaryMessage(bot, config.groupId, "Messaging enabled");
+            console.log("[Bot] Startup message sent to group");
           } catch (error) {
-            console.error("Failed to send startup message", error);
+            console.error("[Bot] Failed to send startup message:", error);
           }
         },
       });
     },
 
     async stop() {
+      console.log("[Bot] stop() called");
       await bot.stop();
       botInstance = null;
+      console.log("[Bot] Bot stopped and instance cleared");
     },
 
     async sendMessage(topicId: number, text: string) {
+      console.log(`[Bot] sendMessage to topic ${topicId}: "${text.slice(0, 50)}..."`);
       await bot.api.sendMessage(config.groupId, text, {
         message_thread_id: topicId,
       });
     },
 
     async getForumTopics(groupId: number) {
-      return await (bot.api as any).getForumTopics(groupId);
+      console.log(`[Bot] getForumTopics called for group ${groupId}`);
+      try {
+        // Note: Telegram Bot API doesn't provide a direct method to list all forum topics
+        // Topics are managed through message_thread_id when messages are sent
+        // We'll return an empty list and create topics on-demand instead
+        console.log("[Bot] Forum topics listing not available via Bot API, returning empty list");
+        return { topics: [] };
+      } catch (error) {
+        console.error("[Bot] getForumTopics error:", error);
+        return { error: String(error), topics: [] };
+      }
     },
 
     async createForumTopic(groupId: number, name: string) {
-      return await bot.api.createForumTopic(groupId, name);
+      console.log(`[Bot] createForumTopic called: "${name}"`);
+      const result = await bot.api.createForumTopic(groupId, name);
+      console.log(`[Bot] Created forum topic with ID: ${result.message_thread_id}`);
+      return result;
     },
   };
 }

@@ -14,25 +14,33 @@ function parseAllowedUserIds(value) {
   return value.split(",").map((id) => id.trim()).filter((id) => id !== "").map((id) => Number.parseInt(id, 10)).filter((id) => !Number.isNaN(id));
 }
 function loadConfig() {
+  console.log("[Config] Loading environment configuration...");
   const botToken = process.env.TELEGRAM_BOT_TOKEN;
   const groupId = process.env.TELEGRAM_GROUP_ID;
   const allowedUserIdsStr = process.env.TELEGRAM_ALLOWED_USER_IDS;
   if (!botToken || botToken.trim() === "") {
+    console.error("[Config] Missing TELEGRAM_BOT_TOKEN");
     throw new Error("Missing required environment variable: TELEGRAM_BOT_TOKEN");
   }
   if (!groupId || groupId.trim() === "") {
+    console.error("[Config] Missing TELEGRAM_GROUP_ID");
     throw new Error("Missing required environment variable: TELEGRAM_GROUP_ID");
   }
   const parsedGroupId = Number.parseInt(groupId, 10);
   if (Number.isNaN(parsedGroupId)) {
+    console.error("[Config] Invalid TELEGRAM_GROUP_ID (not a number)");
     throw new Error("TELEGRAM_GROUP_ID must be a valid number");
   }
   const allowedUserIds = parseAllowedUserIds(allowedUserIdsStr);
   if (allowedUserIds.length === 0) {
+    console.error("[Config] Missing or invalid TELEGRAM_ALLOWED_USER_IDS");
     throw new Error(
       "Missing or invalid TELEGRAM_ALLOWED_USER_IDS (must be comma-separated numeric user IDs)"
     );
   }
+  console.log(
+    `[Config] Configuration loaded: groupId=${parsedGroupId}, allowedUsers=${allowedUserIds.length}`
+  );
   return {
     botToken,
     groupId: parsedGroupId,
@@ -131,20 +139,27 @@ function isUserAllowed(ctx, allowedUserIds) {
   return allowedUserIds.includes(userId);
 }
 function createTelegramBot(config, client, logger, sessionStore) {
+  console.log("[Bot] createTelegramBot called");
   if (botInstance) {
+    console.log("[Bot] Reusing existing bot instance");
     logger.warn("Bot already initialized, reusing existing instance");
     return createBotManager(botInstance, config);
   }
+  console.log("[Bot] Creating new Bot instance with token");
   const bot = new Bot(config.botToken);
   botInstance = bot;
+  console.log("[Bot] Bot instance created");
+  console.log("[Bot] Setting up middleware and handlers...");
   bot.use(async (ctx, next) => {
     if (!isUserAllowed(ctx, config.allowedUserIds)) {
+      console.log(`[Bot] Unauthorized access attempt from user ${ctx.from?.id}`);
       logger.warn("Unauthorized user attempted access", { userId: ctx.from?.id });
       return;
     }
     await next();
   });
   bot.command("new", async (ctx) => {
+    console.log("[Bot] /new command received");
     if (ctx.chat?.id !== config.groupId) return;
     try {
       const createSessionResponse = await client.session.create({ body: {} });
@@ -171,9 +186,11 @@ function createTelegramBot(config, client, logger, sessionStore) {
     }
   });
   bot.on("message:text", async (ctx) => {
+    console.log(`[Bot] Text message received: "${ctx.message.text?.slice(0, 50)}..."`);
     if (ctx.chat?.id !== config.groupId) return;
     if (ctx.message.text?.startsWith("/")) return;
     const topicId = ctx.message.message_thread_id;
+    console.log(`[Bot] Message in topic: ${topicId}`);
     if (!topicId) {
       const userMessage2 = ctx.message.text;
       await ctx.reply(`Nothing I can do with this ${userMessage2}`);
@@ -229,121 +246,208 @@ function createTelegramBot(config, client, logger, sessionStore) {
     }
   });
   bot.catch((error) => {
+    console.error("[Bot] Bot error caught:", error);
     logger.error("Bot error", { error: String(error) });
   });
+  console.log("[Bot] All handlers registered, creating bot manager");
   return createBotManager(bot, config);
 }
 function createBotManager(bot, config) {
   return {
     async start() {
+      console.log("[Bot] start() called - beginning long polling...");
       await bot.start({
         drop_pending_updates: true,
         onStart: async () => {
-          console.log("Telegram bot started");
+          console.log("[Bot] Telegram bot polling started successfully");
           try {
             await sendTemporaryMessage(bot, config.groupId, "Messaging enabled");
+            console.log("[Bot] Startup message sent to group");
           } catch (error) {
-            console.error("Failed to send startup message", error);
+            console.error("[Bot] Failed to send startup message:", error);
           }
         }
       });
     },
     async stop() {
+      console.log("[Bot] stop() called");
       await bot.stop();
       botInstance = null;
+      console.log("[Bot] Bot stopped and instance cleared");
     },
     async sendMessage(topicId, text) {
+      console.log(`[Bot] sendMessage to topic ${topicId}: "${text.slice(0, 50)}..."`);
       await bot.api.sendMessage(config.groupId, text, {
         message_thread_id: topicId
       });
     },
     async getForumTopics(groupId) {
-      return await bot.api.getForumTopics(groupId);
+      console.log(`[Bot] getForumTopics called for group ${groupId}`);
+      try {
+        console.log("[Bot] Forum topics listing not available via Bot API, returning empty list");
+        return { topics: [] };
+      } catch (error) {
+        console.error("[Bot] getForumTopics error:", error);
+        return { error: String(error), topics: [] };
+      }
     },
     async createForumTopic(groupId, name) {
-      return await bot.api.createForumTopic(groupId, name);
+      console.log(`[Bot] createForumTopic called: "${name}"`);
+      const result = await bot.api.createForumTopic(groupId, name);
+      console.log(`[Bot] Created forum topic with ID: ${result.message_thread_id}`);
+      return result;
     }
   };
 }
 
 // src/telegram-remote.ts
 var TelegramRemote = async ({ client }) => {
+  console.log("[TelegramRemote] Plugin initialization started");
   const logger = createLogger(client);
   let config;
   try {
+    console.log("[TelegramRemote] Loading configuration...");
     config = loadConfig();
+    console.log("[TelegramRemote] Configuration loaded successfully");
   } catch (error) {
+    console.error("[TelegramRemote] Configuration error:", error);
     logger.error(`Configuration error: ${error}`);
     return {
       event: async () => {
       }
     };
   }
+  console.log("[TelegramRemote] Creating session store and message tracker...");
   const sessionStore = new SessionStore();
   const messageTracker = new MessageTracker();
+  console.log("[TelegramRemote] Creating Telegram bot...");
   const bot = createTelegramBot(config, client, logger, sessionStore);
-  try {
-    const sessionsResponse = await client.session.list();
-    const topicsResponse = await bot.getForumTopics(config.groupId);
-    if (sessionsResponse.error) {
-      logger.error("Failed to list sessions", { error: sessionsResponse.error });
-    } else if (topicsResponse.error) {
-      logger.error("Failed to get forum topics", { error: String(topicsResponse.error) });
-    } else {
-      const sessions = sessionsResponse.data || [];
-      console.log(sessions);
-      const topics = topicsResponse.topics || [];
-      const topicMap = /* @__PURE__ */ new Map();
-      for (const topic of topics) {
-        topicMap.set(topic.name, topic);
-      }
-      for (const session of sessions) {
-        const topicName = `Session ${session.id.slice(0, 8)}`;
-        const existingTopic = topicMap.get(topicName);
-        if (!existingTopic) {
-          try {
-            const newTopic = await bot.createForumTopic(config.groupId, topicName);
-            sessionStore.create(newTopic.message_thread_id, session.id);
-            logger.info("Created topic for existing session", {
-              sessionId: session.id,
-              topicId: newTopic.message_thread_id
-            });
-          } catch (error) {
-            logger.error("Failed to create topic for session", {
-              sessionId: session.id,
-              error: String(error)
-            });
-          }
-        } else {
-          sessionStore.create(existingTopic.message_thread_id, session.id);
+  console.log("[TelegramRemote] Bot created successfully");
+  console.log("[TelegramRemote] Starting async session/topic synchronization...");
+  const initializeTopics = async () => {
+    try {
+      console.log("[TelegramRemote] Fetching existing sessions...");
+      const sessionsResponse = await client.session.list();
+      console.log("[TelegramRemote] Fetching forum topics...");
+      const topicsResponse = await bot.getForumTopics(config.groupId);
+      if (sessionsResponse.error) {
+        console.error("[TelegramRemote] Failed to list sessions:", sessionsResponse.error);
+        logger.error("Failed to list sessions", { error: sessionsResponse.error });
+      } else if (topicsResponse.error) {
+        console.error("[TelegramRemote] Failed to get forum topics:", topicsResponse.error);
+        logger.error("Failed to get forum topics", { error: String(topicsResponse.error) });
+      } else {
+        const sessions = sessionsResponse.data || [];
+        const topics = topicsResponse.topics || [];
+        console.log(
+          `[TelegramRemote] Found ${sessions.length} sessions and ${topics.length} topics`
+        );
+        const topicMap = /* @__PURE__ */ new Map();
+        for (const topic of topics) {
+          topicMap.set(topic.name, topic);
         }
+        for (const session of sessions) {
+          const baseTitle = session.title || `Session ${session.id.slice(0, 8)}`;
+          const topicName = baseTitle.length > 100 ? `${baseTitle.slice(0, 97)}...` : baseTitle;
+          const existingTopic = topicMap.get(topicName);
+          if (!existingTopic) {
+            try {
+              console.log(
+                `[TelegramRemote] Creating topic "${topicName}" for session ${session.id.slice(0, 8)}...`
+              );
+              const newTopic = await bot.createForumTopic(config.groupId, topicName);
+              sessionStore.create(newTopic.message_thread_id, session.id);
+              logger.info("Created topic for existing session", {
+                sessionId: session.id,
+                topicId: newTopic.message_thread_id,
+                topicName
+              });
+              console.log(
+                `[TelegramRemote] Topic "${topicName}" created for session ${session.id.slice(0, 8)}`
+              );
+            } catch (error) {
+              console.error(
+                `[TelegramRemote] Failed to create topic "${topicName}" for session ${session.id.slice(0, 8)}:`,
+                error
+              );
+              logger.error("Failed to create topic for session", {
+                sessionId: session.id,
+                topicName,
+                error: String(error)
+              });
+            }
+          } else {
+            sessionStore.create(existingTopic.message_thread_id, session.id);
+            console.log(
+              `[TelegramRemote] Mapped existing topic "${topicName}" to session ${session.id.slice(0, 8)}`
+            );
+          }
+        }
+        console.log("[TelegramRemote] Session/topic synchronization completed");
       }
+    } catch (error) {
+      console.error("[TelegramRemote] Failed to initialize topics:", error);
+      logger.error("Failed to initialize topics", { error: String(error) });
     }
-  } catch (error) {
-    logger.error("Failed to initialize topics", { error: String(error) });
-  }
+  };
+  initializeTopics().catch((error) => {
+    console.error("[TelegramRemote] Unexpected error in topic initialization:", error);
+  });
+  console.log("[TelegramRemote] Starting Telegram bot polling...");
   bot.start().catch((error) => {
+    console.error("[TelegramRemote] Failed to start bot:", error);
     logger.error("Failed to start bot", { error: String(error) });
   });
-  process.on("SIGINT", () => {
-    bot.stop().catch(() => {
-    });
+  let isShuttingDown = false;
+  process.on("SIGINT", async () => {
+    if (isShuttingDown) {
+      console.log("[TelegramRemote] Force exit...");
+      process.exit(1);
+    }
+    isShuttingDown = true;
+    console.log("[TelegramRemote] Received SIGINT, stopping bot...");
+    try {
+      await bot.stop();
+      console.log("[TelegramRemote] Bot stopped successfully, exiting...");
+      process.exit(0);
+    } catch (error) {
+      console.error("[TelegramRemote] Error stopping bot:", error);
+      process.exit(1);
+    }
   });
-  process.on("SIGTERM", () => {
-    bot.stop().catch(() => {
-    });
+  process.on("SIGTERM", async () => {
+    if (isShuttingDown) {
+      console.log("[TelegramRemote] Force exit...");
+      process.exit(1);
+    }
+    isShuttingDown = true;
+    console.log("[TelegramRemote] Received SIGTERM, stopping bot...");
+    try {
+      await bot.stop();
+      console.log("[TelegramRemote] Bot stopped successfully, exiting...");
+      process.exit(0);
+    } catch (error) {
+      console.error("[TelegramRemote] Error stopping bot:", error);
+      process.exit(1);
+    }
   });
+  console.log("[TelegramRemote] Plugin initialization complete, returning event handler");
   return {
     event: async ({ event }) => {
+      console.log(`[TelegramRemote] Event received: ${event.type}`);
       if (event.type === "session.created") {
         const sessionId = event.properties.info.id;
         const topicId = sessionStore.getTopicBySession(sessionId);
+        console.log(
+          `[TelegramRemote] Session created: ${sessionId.slice(0, 8)}, topicId: ${topicId}`
+        );
         if (topicId) {
           await bot.sendMessage(topicId, `\u2705 Session initialized: ${sessionId.slice(0, 8)}`);
         }
       }
       if (event.type === "message.updated") {
         const message = event.properties.info;
+        console.log(`[TelegramRemote] Message updated: ${message.id}, role: ${message.role}`);
         if (message.role === "user") {
           messageTracker.markAsUser(message.id);
         } else if (message.role === "assistant") {
@@ -367,6 +471,9 @@ var TelegramRemote = async ({ client }) => {
         }
         const delta = event.properties.delta;
         if (delta && delta.trim()) {
+          console.log(
+            `[TelegramRemote] Sending delta to topic ${topicId}: "${delta.slice(0, 50)}..."`
+          );
           await bot.sendMessage(topicId, delta);
         }
       }
