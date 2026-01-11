@@ -79,7 +79,7 @@ import { loadConfig } from "./config.js";  // Include .js extension (ESM)
 - **Classes**: Use for stateful components (e.g., `SessionStore`, `MessageTracker`)
 - **Factory Functions**: Use for creating instances with dependencies (e.g., `createLogger`)
 - **Async/Await**: Always use instead of raw promises
-- **Error Handling**: Use try/catch, log with context, return early, provide user-friendly messages
+- **Utility Functions**: Always check existing utility functions in `lib/` before creating new ones
 
 ```typescript
 // Example: Error handling pattern
@@ -108,7 +108,8 @@ plugin/
 │   └── lib/
 │       ├── config.ts         # Service constants
 │       ├── logger.ts         # OpenCode logging wrapper
-│       └── types.ts          # TypeScript type definitions
+│       ├── types.ts          # TypeScript type definitions
+│       └── utils.ts          # Utility functions (e.g., sendTemporaryMessage)
 ├── dist/                     # Built output
 ├── package.json
 ├── tsconfig.json

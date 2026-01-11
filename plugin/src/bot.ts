@@ -3,11 +3,14 @@ import type { OpencodeClient } from "./lib/types.js";
 import type { Logger } from "./lib/logger.js";
 import type { Config } from "./config.js";
 import { SessionStore } from "./session-store.js";
+import { sendTemporaryMessage } from "./lib/utils.js";
 
 export interface TelegramBotManager {
   start(): Promise<void>;
   stop(): Promise<void>;
   sendMessage(topicId: number, text: string): Promise<void>;
+  getForumTopics(groupId: number): Promise<any>;
+  createForumTopic(groupId: number, name: string): Promise<any>;
 }
 
 let botInstance: Bot | null = null;
@@ -155,7 +158,7 @@ function createBotManager(bot: Bot, config: Config): TelegramBotManager {
         onStart: async () => {
           console.log("Telegram bot started");
           try {
-            await bot.api.sendMessage(config.groupId, "Messaging enabled");
+            await sendTemporaryMessage(bot, config.groupId, "Messaging enabled");
           } catch (error) {
             console.error("Failed to send startup message", error);
           }
@@ -172,6 +175,14 @@ function createBotManager(bot: Bot, config: Config): TelegramBotManager {
       await bot.api.sendMessage(config.groupId, text, {
         message_thread_id: topicId,
       });
+    },
+
+    async getForumTopics(groupId: number) {
+      return await (bot.api as any).getForumTopics(groupId);
+    },
+
+    async createForumTopic(groupId: number, name: string) {
+      return await bot.api.createForumTopic(groupId, name);
     },
   };
 }
