@@ -311,35 +311,16 @@ var TelegramQueue = class {
   }
 };
 
-// src/bot.ts
-var botInstance = null;
-function isUserAllowed(ctx, allowedUserIds) {
-  const userId = ctx.from?.id;
-  if (!userId) return false;
-  return allowedUserIds.includes(userId);
-}
-function createTelegramBot(config, client, logger, sessionStore, messageTracker) {
-  console.log("[Bot] createTelegramBot called");
-  const queue = new TelegramQueue(500);
-  if (botInstance) {
-    console.log("[Bot] Reusing existing bot instance");
-    logger.warn("Bot already initialized, reusing existing instance");
-    return createBotManager(botInstance, config, queue);
-  }
-  console.log("[Bot] Creating new Bot instance with token");
-  const bot = new Bot(config.botToken);
-  botInstance = bot;
-  console.log("[Bot] Bot instance created");
-  console.log("[Bot] Setting up middleware and handlers...");
-  bot.use(async (ctx, next) => {
-    if (!isUserAllowed(ctx, config.allowedUserIds)) {
-      console.log(`[Bot] Unauthorized access attempt from user ${ctx.from?.id}`);
-      logger.warn("Unauthorized user attempted access", { userId: ctx.from?.id });
-      return;
-    }
-    await next();
-  });
-  bot.command("new", async (ctx) => {
+// src/commands/new.ts
+function createNewCommandHandler({
+  bot,
+  config,
+  client,
+  logger,
+  sessionStore,
+  queue
+}) {
+  return async (ctx) => {
     console.log("[Bot] /new command received");
     if (ctx.chat?.id !== config.groupId) return;
     try {
@@ -369,8 +350,18 @@ function createTelegramBot(config, client, logger, sessionStore, messageTracker)
       logger.error("Failed to create new session", { error: String(error) });
       await ctx.reply("\u274C Failed to create session");
     }
-  });
-  bot.command("cleartopics", async (ctx) => {
+  };
+}
+
+// src/commands/cleartopics.ts
+function createClearTopicsCommandHandler({
+  bot,
+  config,
+  logger,
+  sessionStore,
+  queue
+}) {
+  return async (ctx) => {
     console.log("[Bot] /cleartopics command received");
     if (ctx.chat?.id !== config.groupId) return;
     const topicIds = sessionStore.getAllTopicIds().filter((topicId) => topicId !== 1);
@@ -398,8 +389,19 @@ function createTelegramBot(config, client, logger, sessionStore, messageTracker)
     } else {
       await ctx.reply(`Cleared ${deletedCount} topics.`);
     }
-  });
-  bot.command("deletesessions", async (ctx) => {
+  };
+}
+
+// src/commands/deletesessions.ts
+function createDeleteSessionsCommandHandler({
+  bot,
+  config,
+  client,
+  logger,
+  sessionStore,
+  queue
+}) {
+  return async (ctx) => {
     console.log("[Bot] /deletesessions command received");
     if (ctx.chat?.id !== config.groupId) return;
     let deletedSessions = 0;
@@ -458,7 +460,48 @@ function createTelegramBot(config, client, logger, sessionStore, messageTracker)
     await ctx.reply(
       `Deleted ${deletedSessions} sessions (${failedSessions} failed). Cleared ${deletedTopics} topics (${failedTopics} failed).`
     );
+  };
+}
+
+// src/bot.ts
+var botInstance = null;
+function isUserAllowed(ctx, allowedUserIds) {
+  const userId = ctx.from?.id;
+  if (!userId) return false;
+  return allowedUserIds.includes(userId);
+}
+function createTelegramBot(config, client, logger, sessionStore) {
+  console.log("[Bot] createTelegramBot called");
+  const queue = new TelegramQueue(500);
+  if (botInstance) {
+    console.log("[Bot] Reusing existing bot instance");
+    logger.warn("Bot already initialized, reusing existing instance");
+    return createBotManager(botInstance, config, queue);
+  }
+  console.log("[Bot] Creating new Bot instance with token");
+  const bot = new Bot(config.botToken);
+  botInstance = bot;
+  console.log("[Bot] Bot instance created");
+  console.log("[Bot] Setting up middleware and handlers...");
+  bot.use(async (ctx, next) => {
+    if (!isUserAllowed(ctx, config.allowedUserIds)) {
+      console.log(`[Bot] Unauthorized access attempt from user ${ctx.from?.id}`);
+      logger.warn("Unauthorized user attempted access", { userId: ctx.from?.id });
+      return;
+    }
+    await next();
   });
+  const commandDeps = {
+    bot,
+    config,
+    client,
+    logger,
+    sessionStore,
+    queue
+  };
+  bot.command("new", createNewCommandHandler(commandDeps));
+  bot.command("cleartopics", createClearTopicsCommandHandler(commandDeps));
+  bot.command("deletesessions", createDeleteSessionsCommandHandler(commandDeps));
   bot.on("message:text", async (ctx) => {
     console.log(`[Bot] Text message received: "${ctx.message.text?.slice(0, 50)}..."`);
     if (ctx.chat?.id !== config.groupId) return;
@@ -492,11 +535,6 @@ function createTelegramBot(config, client, logger, sessionStore, messageTracker)
       }
     }
     const userMessage = ctx.message.text;
-    const promptMessage = await queue.enqueue(
-      () => bot.api.sendMessage(config.groupId, `Prompt: ${userMessage}`, {
-        message_thread_id: topicId
-      })
-    );
     try {
       const response = await client.session.prompt({
         path: { id: sessionId },
@@ -512,7 +550,6 @@ function createTelegramBot(config, client, logger, sessionStore, messageTracker)
         await ctx.reply("\u274C Failed to process message");
         return;
       }
-      sessionStore.setPromptMessageId(topicId, promptMessage.message_id);
       logger.debug("Forwarded message to OpenCode", {
         sessionId,
         topicId
@@ -627,7 +664,7 @@ var TelegramRemote = async ({ client }) => {
   const sessionStore = new SessionStore();
   const messageTracker = new MessageTracker();
   console.log("[TelegramRemote] Creating Telegram bot...");
-  const bot = createTelegramBot(config, client, logger, sessionStore, messageTracker);
+  const bot = createTelegramBot(config, client, logger, sessionStore);
   console.log("[TelegramRemote] Bot created successfully");
   console.log("[TelegramRemote] Starting async session/topic synchronization...");
   const initializeTopics = async () => {

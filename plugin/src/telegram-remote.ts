@@ -29,7 +29,7 @@ export const TelegramRemote: Plugin = async ({ client }) => {
   const messageTracker = new MessageTracker();
 
   console.log("[TelegramRemote] Creating Telegram bot...");
-  const bot = createTelegramBot(config, client, logger, sessionStore, messageTracker);
+  const bot = createTelegramBot(config, client, logger, sessionStore);
   console.log("[TelegramRemote] Bot created successfully");
 
   // Initialize missing topics for existing sessions (async, non-blocking)
@@ -209,7 +209,7 @@ export const TelegramRemote: Plugin = async ({ client }) => {
             // Stop processing and clean up interval
             messageTracker.setProcessingPrompt(message.id, false);
             messageTracker.clearUpdateInterval(message.id);
-
+            
             const content = messageTracker.getContent(message.id);
             if (content) {
               const lines = content.split("\n");
