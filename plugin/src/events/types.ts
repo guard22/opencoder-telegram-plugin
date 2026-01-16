@@ -6,8 +6,8 @@ import type { SessionStore } from "../session-store.js";
 export type TelegramBot = ReturnType<typeof createTelegramBot>;
 
 export interface EventHandlerContext {
-    client: OpencodeClient;
-    bot: TelegramBot;
-    sessionStore: SessionStore;
-    messageTracker: MessageTracker;
+  client: OpencodeClient;
+  bot: TelegramBot;
+  sessionStore: SessionStore;
+  messageTracker: MessageTracker;
 }

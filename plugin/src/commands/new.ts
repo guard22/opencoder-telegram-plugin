@@ -7,7 +7,6 @@ export function createNewCommandHandler({
   client,
   logger,
   sessionStore,
-  queue,
 }: CommandDeps) {
   return async (ctx: Context) => {
     console.log("[Bot] /new command received");
@@ -22,26 +21,13 @@ export function createNewCommandHandler({
       }
 
       const sessionId = createSessionResponse.data.id;
-      const sessionTitle = createSessionResponse.data.title || `Session ${sessionId.slice(0, 8)}`;
-      const topicName =
-        sessionTitle.length > 100 ? `${sessionTitle.slice(0, 97)}...` : sessionTitle;
+      sessionStore.setActiveSession(sessionId);
 
-      const topic = await queue.enqueue(() => bot.api.createForumTopic(config.groupId, topicName));
-      const topicId = topic.message_thread_id;
-
-      sessionStore.create(topicId, sessionId);
-
-      logger.info("Created new session with topic", {
+      logger.info("Created new session", {
         sessionId,
-        topicId,
-        topicName,
       });
 
-      await queue.enqueue(() =>
-        bot.api.sendMessage(config.groupId, `✅ Session created: ${sessionId}`, {
-          message_thread_id: topicId,
-        }),
-      );
+      await bot.sendMessage(`✅ Session created: ${sessionId}`);
     } catch (error) {
       logger.error("Failed to create new session", { error: String(error) });
       await ctx.reply("❌ Failed to create session");

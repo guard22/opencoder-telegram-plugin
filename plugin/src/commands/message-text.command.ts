@@ -7,15 +7,7 @@ export function createMessageTextHandler({ config, client, logger, sessionStore 
     if (ctx.chat?.id !== config.groupId) return;
     if (ctx.message?.text?.startsWith("/")) return;
 
-    const topicId = ctx.message?.message_thread_id;
-    console.log(`[Bot] Message in topic: ${topicId}`);
-    if (!topicId) {
-      const userMessage = ctx.message?.text;
-      await ctx.reply(`Nothing I can do with this ${userMessage}`);
-      return;
-    }
-
-    let sessionId = sessionStore.getSessionByTopic(topicId);
+    let sessionId = sessionStore.getActiveSession();
 
     if (!sessionId) {
       try {
@@ -27,11 +19,10 @@ export function createMessageTextHandler({ config, client, logger, sessionStore 
         }
 
         sessionId = createSessionResponse.data.id;
-        sessionStore.create(topicId, sessionId);
+        sessionStore.setActiveSession(sessionId);
 
-        logger.info("Auto-created session for existing topic", {
+        logger.info("Auto-created session", {
           sessionId,
-          topicId,
         });
       } catch (error) {
         logger.error("Failed to create session", { error: String(error) });
@@ -61,7 +52,6 @@ export function createMessageTextHandler({ config, client, logger, sessionStore 
 
       logger.debug("Forwarded message to OpenCode", {
         sessionId,
-        topicId,
       });
     } catch (error) {
       logger.error("Failed to send message to OpenCode", {

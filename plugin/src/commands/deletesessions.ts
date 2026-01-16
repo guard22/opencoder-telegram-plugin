@@ -2,12 +2,10 @@ import type { Context } from "grammy";
 import type { CommandDeps } from "./types.js";
 
 export function createDeleteSessionsCommandHandler({
-  bot,
   config,
   client,
   logger,
   sessionStore,
-  queue,
 }: CommandDeps) {
   return async (ctx: Context) => {
     console.log("[Bot] /deletesessions command received");
@@ -57,28 +55,9 @@ export function createDeleteSessionsCommandHandler({
       return;
     }
 
-    const topicIds = sessionStore.getAllTopicIds().filter((topicId) => topicId !== 1);
-    let deletedTopics = 0;
-    let failedTopics = 0;
+    // Clear active session
+    sessionStore.clearActiveSession();
 
-    for (const topicId of topicIds) {
-      try {
-        await queue.enqueue(() => bot.api.deleteForumTopic(config.groupId, topicId));
-        deletedTopics += 1;
-      } catch (error) {
-        failedTopics += 1;
-        logger.error("Failed to delete forum topic", {
-          topicId,
-          error: String(error),
-        });
-      }
-    }
-
-    sessionStore.clearAll();
-
-    await ctx.reply(
-      `Deleted ${deletedSessions} sessions (${failedSessions} failed). ` +
-        `Cleared ${deletedTopics} topics (${failedTopics} failed).`,
-    );
+    await ctx.reply(`Deleted ${deletedSessions} sessions (${failedSessions} failed).`);
   };
 }

@@ -1,24 +1,24 @@
 # OpenCoder Telegram Remote Plugin
 
-Control OpenCode sessions remotely via Telegram using Topics for session isolation.
+Control OpenCode sessions remotely via Telegram in a single chat.
 
 > **Disclaimer:** This project is not affiliated with, endorsed by, or sponsored by OpenCode, SST, or any of their affiliates. OpenCode is a trademark of SST.
 
 ## Features
 
 - 🔐 **Secure**: Whitelist-based user access control
-- 📁 **Topic-based sessions**: Each OpenCode session maps to a Telegram Topic
+- 💬 **Single chat interface**: All interactions in one Telegram chat
 - 🤖 **Remote control**: Send prompts and receive responses via Telegram
-- 🔄 **Auto-session creation**: Topics automatically create sessions on first message
-- 💬 **Real-time feedback**: Assistant responses streamed back to the topic
+- 🔄 **Auto-session management**: Automatically creates and manages sessions
+- ⚡ **Real-time feedback**: Assistant responses streamed back to chat
 
 ## Requirements
 
 - Node.js 18+
 - OpenCode CLI installed
 - Telegram Bot (from [@BotFather](https://t.me/BotFather))
-- Private Telegram Supergroup with Topics enabled
-- Bot must be admin in the group
+- Private Telegram Group or Chat
+- Bot must be admin in the group (if using a group)
 
 ## Installation
 
@@ -30,11 +30,10 @@ Control OpenCode sessions remotely via Telegram using Topics for session isolati
 
 ### 2. Setup Telegram Group
 
-1. Create a new **Supergroup** in Telegram
+1. Create a new **Group** or use an existing private group in Telegram
 2. Make it **private**
 3. Add your bot as admin with all permissions
-4. Enable **Topics** (Group Settings → Topics → Enable)
-5. Get the group ID:
+4. Get the group ID:
    - Add [@userinfobot](https://t.me/userinfobot) to the group
    - It will show the group ID (numeric, usually negative)
    - Remove the bot after getting the ID
@@ -101,35 +100,46 @@ Then reference it:
 
 ### Creating a Session
 
-Send `/new` command anywhere in the group. The bot will:
+Send `/new` command in the chat. The bot will:
 - Create a new OpenCode session
-- Create a new Topic named `Session <short-id>`
-- Post confirmation in the topic
+- Set it as the active session
+- Post confirmation in the chat
 
 ### Sending Prompts
 
-1. Open any topic (or send message in a new topic)
-2. Type your prompt and send
-3. The bot forwards it to the OpenCode session
-4. Assistant responses appear in the same topic
+1. Type your prompt and send it in the chat
+2. The bot forwards it to the active OpenCode session
+3. Assistant responses appear in the same chat
 
 ### Auto-Session Creation
 
-Send any message in a topic without `/new`:
-- Bot automatically creates a session bound to that topic
-- All messages in that topic go to the same session
+Send any message without using `/new` first:
+- Bot automatically creates a session
+- Sets it as the active session
+- All subsequent messages go to this session
+
+### Switching Sessions
+
+To switch to a different session:
+- Use `/new` to create and switch to a new session
+- The new session becomes the active session
 
 ## Architecture
 
 ```
-Telegram Topic 1  ←→  OpenCode Session 1
-Telegram Topic 2  ←→  OpenCode Session 2
-Telegram Topic 3  ←→  OpenCode Session 3
+Telegram Chat  ←→  Active OpenCode Session
 ```
 
-- **One topic = One session** (1:1 mapping)
+- **One active session** at a time
+- Use `/new` to create and switch sessions
+- Previous session remains in OpenCode but becomes inactive
 - Sessions persist in memory only
-- Topics are never auto-deleted
+
+## Commands
+
+- `/new` - Create a new session and set it as active
+- `/deletesessions` - Delete all OpenCode sessions
+- `/help` - Show help message
 
 ## Security
 
@@ -151,9 +161,8 @@ Telegram Topic 3  ←→  OpenCode Session 3
 - ❌ Public groups (use private groups only)
 - ❌ Webhooks (uses long polling)
 - ❌ Persistent sessions (memory only)
-- ❌ Multi-user session sharing (one session per topic)
+- ❌ Multiple concurrent sessions (one active session at a time)
 - ❌ Inline keyboards or buttons
-- ❌ Streaming (incremental text updates)
 
 ## Configuration Reference
 
@@ -187,17 +196,11 @@ Telegram Topic 3  ←→  OpenCode Session 3
 - Confirm your user ID is in whitelist
 - Check OpenCode logs for errors
 
-### Can't create topics
-
-- Ensure group is a **Supergroup** (not regular group)
-- Enable Topics in group settings
-- Verify bot has admin rights to manage topics
-
 ### Session not found
 
 - Sessions are memory-only
 - Restarting OpenCode clears all sessions
-- Each topic needs its own session
+- Use `/new` to create a session if none exists
 
 ### Permission denied
 
@@ -214,7 +217,7 @@ plugin/
 │   ├── telegram-remote.ts    # Main plugin entry
 │   ├── bot.ts                # Grammy bot setup
 │   ├── config.ts             # Environment config loader
-│   ├── session-store.ts      # Topic ↔ Session mapping
+│   ├── session-store.ts      # Active session tracking
 │   ├── message-tracker.ts    # Track message roles
 │   └── lib/
 │       ├── logger.ts         # OpenCode logging
@@ -260,5 +263,5 @@ MIT
 
 Forked from [opencode-telegram-notification-plugin](https://github.com/Davasny/opencode-telegram-notification-plugin)
 
-Extended with remote control functionality using Grammy and Telegram Topics.
+Extended with remote control functionality using Grammy.
 # opencoder-telegram-plugin

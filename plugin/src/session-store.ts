@@ -1,49 +1,28 @@
-export interface SessionMapping {
-  topicId: number;
-  sessionId: string;
-}
-
 export class SessionStore {
-  private topicToSession = new Map<number, string>();
-  private sessionToTopic = new Map<string, number>();
-  private topicToPromptMessageId = new Map<number, number>(); // topicId -> Telegram message ID
+  private activeSessionId: string | null = null;
+  private promptMessageId: number | undefined = undefined; // Telegram message ID for active prompt
 
-  create(topicId: number, sessionId: string): void {
-    this.topicToSession.set(topicId, sessionId);
-    this.sessionToTopic.set(sessionId, topicId);
+  setActiveSession(sessionId: string): void {
+    this.activeSessionId = sessionId;
   }
 
-  getSessionByTopic(topicId: number): string | undefined {
-    return this.topicToSession.get(topicId);
+  getActiveSession(): string | null {
+    return this.activeSessionId;
   }
 
-  getTopicBySession(sessionId: string): number | undefined {
-    return this.sessionToTopic.get(sessionId);
+  clearActiveSession(): void {
+    this.activeSessionId = null;
   }
 
-  has(topicId: number): boolean {
-    return this.topicToSession.has(topicId);
+  setPromptMessageId(messageId: number): void {
+    this.promptMessageId = messageId;
   }
 
-  getAllTopicIds(): number[] {
-    return Array.from(this.topicToSession.keys());
+  getPromptMessageId(): number | undefined {
+    return this.promptMessageId;
   }
 
-  setPromptMessageId(topicId: number, messageId: number): void {
-    this.topicToPromptMessageId.set(topicId, messageId);
-  }
-
-  getPromptMessageId(topicId: number): number | undefined {
-    return this.topicToPromptMessageId.get(topicId);
-  }
-
-  clearPromptMessageId(topicId: number): void {
-    this.topicToPromptMessageId.delete(topicId);
-  }
-
-  clearAll(): void {
-    this.topicToSession.clear();
-    this.sessionToTopic.clear();
-    this.topicToPromptMessageId.clear();
+  clearPromptMessageId(): void {
+    this.promptMessageId = undefined;
   }
 }

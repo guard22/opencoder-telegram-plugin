@@ -6,53 +6,12 @@
 // src/bot.ts
 import { Bot, InputFile } from "grammy";
 
-// src/commands/cleartopics.ts
-function createClearTopicsCommandHandler({
-  bot,
-  config,
-  logger,
-  sessionStore,
-  queue
-}) {
-  return async (ctx) => {
-    console.log("[Bot] /cleartopics command received");
-    if (ctx.chat?.id !== config.groupId) return;
-    const topicIds = sessionStore.getAllTopicIds().filter((topicId) => topicId !== 1);
-    if (topicIds.length === 0) {
-      await ctx.reply("No topics to clear.");
-      return;
-    }
-    let deletedCount = 0;
-    let failedCount = 0;
-    for (const topicId of topicIds) {
-      try {
-        await queue.enqueue(() => bot.api.deleteForumTopic(config.groupId, topicId));
-        deletedCount += 1;
-      } catch (error) {
-        failedCount += 1;
-        logger.error("Failed to delete forum topic", {
-          topicId,
-          error: String(error)
-        });
-      }
-    }
-    sessionStore.clearAll();
-    if (failedCount > 0) {
-      await ctx.reply(`Cleared ${deletedCount} topics, ${failedCount} failed.`);
-    } else {
-      await ctx.reply(`Cleared ${deletedCount} topics.`);
-    }
-  };
-}
-
 // src/commands/deletesessions.ts
 function createDeleteSessionsCommandHandler({
-  bot,
   config,
   client,
   logger,
-  sessionStore,
-  queue
+  sessionStore
 }) {
   return async (ctx) => {
     console.log("[Bot] /deletesessions command received");
@@ -94,25 +53,24 @@ function createDeleteSessionsCommandHandler({
       await ctx.reply("\u274C Failed to delete sessions");
       return;
     }
-    const topicIds = sessionStore.getAllTopicIds().filter((topicId) => topicId !== 1);
-    let deletedTopics = 0;
-    let failedTopics = 0;
-    for (const topicId of topicIds) {
-      try {
-        await queue.enqueue(() => bot.api.deleteForumTopic(config.groupId, topicId));
-        deletedTopics += 1;
-      } catch (error) {
-        failedTopics += 1;
-        logger.error("Failed to delete forum topic", {
-          topicId,
-          error: String(error)
-        });
-      }
+    sessionStore.clearActiveSession();
+    await ctx.reply(`Deleted ${deletedSessions} sessions (${failedSessions} failed).`);
+  };
+}
+
+// src/commands/help.ts
+function createHelpCommandHandler({ config }) {
+  return async (ctx) => {
+    console.log("[Bot] /help command received");
+    if (ctx.chat?.id !== config.groupId) return;
+    const userId = ctx.from?.id;
+    if (!userId || !config.allowedUserIds.includes(userId)) {
+      console.log(`[Bot] /help attempt by unauthorized user ${userId}`);
+      await ctx.reply("You are not authorized to use this bot.");
+      return;
     }
-    sessionStore.clearAll();
-    await ctx.reply(
-      `Deleted ${deletedSessions} sessions (${failedSessions} failed). Cleared ${deletedTopics} topics (${failedTopics} failed).`
-    );
+    const helpMessage = "Available commands:\n\n/new - Create a new OpenCode session.\n/deletesessions - Delete all OpenCode sessions.\n/help - Show this help message.\n\nUsage:\n- Use /new to create a new session.\n- Send messages in this chat to interact with the active session.\n- Admin-only commands (like /deletesessions) are restricted to configured users.\n\nNote: All commands require you to be a configured allowed user. The bot enforces this via its middleware and command-level checks.";
+    await ctx.reply(helpMessage);
   };
 }
 
@@ -122,14 +80,7 @@ function createMessageTextHandler({ config, client, logger, sessionStore }) {
     console.log(`[Bot] Text message received: "${ctx.message?.text?.slice(0, 50)}..."`);
     if (ctx.chat?.id !== config.groupId) return;
     if (ctx.message?.text?.startsWith("/")) return;
-    const topicId = ctx.message?.message_thread_id;
-    console.log(`[Bot] Message in topic: ${topicId}`);
-    if (!topicId) {
-      const userMessage2 = ctx.message?.text;
-      await ctx.reply(`Nothing I can do with this ${userMessage2}`);
-      return;
-    }
-    let sessionId = sessionStore.getSessionByTopic(topicId);
+    let sessionId = sessionStore.getActiveSession();
     if (!sessionId) {
       try {
         const createSessionResponse = await client.session.create({ body: {} });
@@ -139,10 +90,9 @@ function createMessageTextHandler({ config, client, logger, sessionStore }) {
           return;
         }
         sessionId = createSessionResponse.data.id;
-        sessionStore.create(topicId, sessionId);
-        logger.info("Auto-created session for existing topic", {
-          sessionId,
-          topicId
+        sessionStore.setActiveSession(sessionId);
+        logger.info("Auto-created session", {
+          sessionId
         });
       } catch (error) {
         logger.error("Failed to create session", { error: String(error) });
@@ -167,8 +117,7 @@ function createMessageTextHandler({ config, client, logger, sessionStore }) {
         return;
       }
       logger.debug("Forwarded message to OpenCode", {
-        sessionId,
-        topicId
+        sessionId
       });
     } catch (error) {
       logger.error("Failed to send message to OpenCode", {
@@ -186,8 +135,7 @@ function createNewCommandHandler({
   config,
   client,
   logger,
-  sessionStore,
-  queue
+  sessionStore
 }) {
   return async (ctx) => {
     console.log("[Bot] /new command received");
@@ -200,21 +148,11 @@ function createNewCommandHandler({
         return;
       }
       const sessionId = createSessionResponse.data.id;
-      const sessionTitle = createSessionResponse.data.title || `Session ${sessionId.slice(0, 8)}`;
-      const topicName = sessionTitle.length > 100 ? `${sessionTitle.slice(0, 97)}...` : sessionTitle;
-      const topic = await queue.enqueue(() => bot.api.createForumTopic(config.groupId, topicName));
-      const topicId = topic.message_thread_id;
-      sessionStore.create(topicId, sessionId);
-      logger.info("Created new session with topic", {
-        sessionId,
-        topicId,
-        topicName
+      sessionStore.setActiveSession(sessionId);
+      logger.info("Created new session", {
+        sessionId
       });
-      await queue.enqueue(
-        () => bot.api.sendMessage(config.groupId, `\u2705 Session created: ${sessionId}`, {
-          message_thread_id: topicId
-        })
-      );
+      await bot.sendMessage(`\u2705 Session created: ${sessionId}`);
     } catch (error) {
       logger.error("Failed to create new session", { error: String(error) });
       await ctx.reply("\u274C Failed to create session");
@@ -363,8 +301,9 @@ function createTelegramBot(config, client, logger, sessionStore) {
     }
     await next();
   });
+  const manager = createBotManager(bot, config, queue);
   const commandDeps = {
-    bot,
+    bot: manager,
     config,
     client,
     logger,
@@ -372,15 +311,15 @@ function createTelegramBot(config, client, logger, sessionStore) {
     queue
   };
   bot.command("new", createNewCommandHandler(commandDeps));
-  bot.command("cleartopics", createClearTopicsCommandHandler(commandDeps));
   bot.command("deletesessions", createDeleteSessionsCommandHandler(commandDeps));
+  bot.command("help", createHelpCommandHandler(commandDeps));
   bot.on("message:text", createMessageTextHandler(commandDeps));
   bot.catch((error) => {
     console.error("[Bot] Bot error caught:", error);
     logger.error("Bot error", { error: String(error) });
   });
-  console.log("[Bot] All handlers registered, creating bot manager");
-  return createBotManager(bot, config, queue);
+  console.log("[Bot] All handlers registered, returning bot manager");
+  return manager;
 }
 function createBotManager(bot, config, queue) {
   return {
@@ -405,47 +344,22 @@ function createBotManager(bot, config, queue) {
       botInstance = null;
       console.log("[Bot] Bot stopped and instance cleared");
     },
-    async sendMessage(topicId, text) {
-      console.log(`[Bot] sendMessage to topic ${topicId}: "${text.slice(0, 50)}..."`);
-      await queue.enqueue(
-        () => bot.api.sendMessage(config.groupId, text, {
-          message_thread_id: topicId
-        })
-      );
+    async sendMessage(text) {
+      console.log(`[Bot] sendMessage: "${text.slice(0, 50)}..."`);
+      await queue.enqueue(() => bot.api.sendMessage(config.groupId, text));
     },
-    async editMessage(topicId, messageId, text) {
-      console.log(
-        `[Bot] editMessage in topic ${topicId}, message ${messageId}: "${text.slice(0, 50)}..."`
-      );
+    async editMessage(messageId, text) {
+      console.log(`[Bot] editMessage ${messageId}: "${text.slice(0, 50)}..."`);
       await queue.enqueue(() => bot.api.editMessageText(config.groupId, messageId, text));
     },
-    async sendDocument(topicId, document, filename) {
-      console.log(`[Bot] sendDocument to topic ${topicId}: filename="${filename}"`);
+    async sendDocument(document, filename) {
+      console.log(`[Bot] sendDocument: filename="${filename}"`);
       await queue.enqueue(
         () => bot.api.sendDocument(
           config.groupId,
-          new InputFile(typeof document === "string" ? Buffer.from(document) : document, filename),
-          {
-            message_thread_id: topicId
-          }
+          new InputFile(typeof document === "string" ? Buffer.from(document) : document, filename)
         )
       );
-    },
-    async getForumTopics(groupId) {
-      console.log(`[Bot] getForumTopics called for group ${groupId}`);
-      try {
-        console.log("[Bot] Forum topics listing not available via Bot API, returning empty list");
-        return { topics: [] };
-      } catch (error) {
-        console.error("[Bot] getForumTopics error:", error);
-        return { error: String(error), topics: [] };
-      }
-    },
-    async createForumTopic(groupId, name) {
-      console.log(`[Bot] createForumTopic called: "${name}"`);
-      const result = await queue.enqueue(() => bot.api.createForumTopic(groupId, name));
-      console.log(`[Bot] Created forum topic with ID: ${result.message_thread_id}`);
-      return result;
     },
     queue
   };
@@ -466,7 +380,6 @@ function loadConfig() {
   const botToken = process.env.TELEGRAM_BOT_TOKEN;
   const groupId = process.env.TELEGRAM_GROUP_ID;
   const allowedUserIdsStr = process.env.TELEGRAM_ALLOWED_USER_IDS;
-  const maxSessionsStr = process.env.TELEGRAM_MAX_SESSIONS;
   if (!botToken || botToken.trim() === "") {
     console.error("[Config] Missing TELEGRAM_BOT_TOKEN");
     throw new Error("Missing required environment variable: TELEGRAM_BOT_TOKEN");
@@ -487,24 +400,79 @@ function loadConfig() {
       "Missing or invalid TELEGRAM_ALLOWED_USER_IDS (must be comma-separated numeric user IDs)"
     );
   }
-  let maxSessions = 5;
-  if (maxSessionsStr && maxSessionsStr.trim() !== "") {
-    const parsed = Number.parseInt(maxSessionsStr, 10);
-    if (!Number.isNaN(parsed) && parsed > 0) {
-      maxSessions = parsed;
-    } else {
-      console.warn(`[Config] Invalid TELEGRAM_MAX_SESSIONS (${maxSessionsStr}), using default: 5`);
-    }
-  }
   console.log(
-    `[Config] Configuration loaded: groupId=${parsedGroupId}, allowedUsers=${allowedUserIds.length}, maxSessions=${maxSessions}`
+    `[Config] Configuration loaded: groupId=${parsedGroupId}, allowedUsers=${allowedUserIds.length}`
   );
   return {
     botToken,
     groupId: parsedGroupId,
-    allowedUserIds,
-    maxSessions
+    allowedUserIds
   };
+}
+
+// src/events/message-part-updated.ts
+var MAX_MESSAGE_SIZE = 5 * 1024 * 1024;
+async function handleMessagePartUpdated(event, context) {
+  const part = event.properties.part;
+  if (part.type !== "text") {
+    return;
+  }
+  const isAssistantMessage = context.messageTracker.isAssistant(part.messageID);
+  if (!isAssistantMessage) {
+    return;
+  }
+  const delta = event.properties.delta;
+  if (delta) {
+    const currentContent = context.messageTracker.getContent(part.messageID) || "";
+    if (currentContent.length + delta.length > MAX_MESSAGE_SIZE) {
+      console.warn(
+        `[TelegramRemote] Message ${part.messageID} exceeded ${MAX_MESSAGE_SIZE} bytes. Truncating.`
+      );
+    } else {
+      context.messageTracker.updateContent(part.messageID, currentContent + delta);
+    }
+  }
+  const fullText = context.messageTracker.getContent(part.messageID) || "";
+  const statusMessageId = context.messageTracker.getStatusMessageId(part.messageID);
+  const hasInterval = context.messageTracker.getLatestUpdate(part.messageID) !== void 0;
+  if (statusMessageId && !hasInterval) {
+    console.log(
+      `[TelegramRemote] First update for message ${part.messageID}, updating status message`
+    );
+    try {
+      await context.bot.editMessage(statusMessageId, fullText || "Processing...");
+      context.messageTracker.setLatestUpdate(part.messageID, fullText);
+      let lastSentText = fullText;
+      const updateInterval = setInterval(async () => {
+        if (!context.messageTracker.isProcessingPrompt(part.messageID)) {
+          console.log(
+            `[TelegramRemote] Processing complete for message ${part.messageID}, stopping interval`
+          );
+          context.messageTracker.clearUpdateInterval(part.messageID);
+          return;
+        }
+        const currentLatest = context.messageTracker.getLatestUpdate(part.messageID);
+        if (currentLatest && currentLatest !== lastSentText) {
+          try {
+            await context.bot.editMessage(statusMessageId, currentLatest);
+            lastSentText = currentLatest;
+            console.log(`[TelegramRemote] Updated status message for ${part.messageID}`);
+          } catch (error) {
+            console.error(`[TelegramRemote] Failed to update status message:`, error);
+          }
+        }
+      }, 500);
+      context.messageTracker.setUpdateInterval(part.messageID, updateInterval);
+      console.log(`[TelegramRemote] Started update interval for message ${part.messageID}`);
+    } catch (error) {
+      console.error(`[TelegramRemote] Failed to update status message:`, error);
+    }
+  } else if (statusMessageId && hasInterval) {
+    console.log(
+      `[TelegramRemote] Subsequent update for message ${part.messageID}, updating latestUpdate`
+    );
+    context.messageTracker.setLatestUpdate(part.messageID, fullText);
+  }
 }
 
 // src/lib/config.ts
@@ -531,78 +499,6 @@ function createLogger(client) {
   };
 }
 
-// src/events/message-part-updated.ts
-var MAX_MESSAGE_SIZE = 5 * 1024 * 1024;
-async function handleMessagePartUpdated(event, context) {
-  const logger = createLogger(context.client);
-  const part = event.properties.part;
-  if (part.type !== "text") {
-    return;
-  }
-  const isAssistantMessage = context.messageTracker.isAssistant(part.messageID);
-  if (!isAssistantMessage) {
-    return;
-  }
-  const sessionId = part.sessionID;
-  const topicId = context.sessionStore.getTopicBySession(sessionId);
-  if (!topicId) {
-    logger.debug("No topic found for session", { sessionId });
-    return;
-  }
-  const delta = event.properties.delta;
-  if (delta) {
-    const currentContent = context.messageTracker.getContent(part.messageID) || "";
-    if (currentContent.length + delta.length > MAX_MESSAGE_SIZE) {
-      console.warn(
-        `[TelegramRemote] Message ${part.messageID} exceeded ${MAX_MESSAGE_SIZE} bytes. Truncating.`
-      );
-    } else {
-      context.messageTracker.updateContent(part.messageID, currentContent + delta);
-    }
-  }
-  const fullText = context.messageTracker.getContent(part.messageID) || "";
-  const statusMessageId = context.messageTracker.getStatusMessageId(part.messageID);
-  const hasInterval = context.messageTracker.getLatestUpdate(part.messageID) !== void 0;
-  if (statusMessageId && !hasInterval) {
-    console.log(
-      `[TelegramRemote] First update for message ${part.messageID}, updating status message`
-    );
-    try {
-      await context.bot.editMessage(topicId, statusMessageId, fullText || "Processing...");
-      context.messageTracker.setLatestUpdate(part.messageID, fullText);
-      let lastSentText = fullText;
-      const updateInterval = setInterval(async () => {
-        if (!context.messageTracker.isProcessingPrompt(part.messageID)) {
-          console.log(
-            `[TelegramRemote] Processing complete for message ${part.messageID}, stopping interval`
-          );
-          context.messageTracker.clearUpdateInterval(part.messageID);
-          return;
-        }
-        const currentLatest = context.messageTracker.getLatestUpdate(part.messageID);
-        if (currentLatest && currentLatest !== lastSentText) {
-          try {
-            await context.bot.editMessage(topicId, statusMessageId, currentLatest);
-            lastSentText = currentLatest;
-            console.log(`[TelegramRemote] Updated status message for ${part.messageID}`);
-          } catch (error) {
-            console.error(`[TelegramRemote] Failed to update status message:`, error);
-          }
-        }
-      }, 500);
-      context.messageTracker.setUpdateInterval(part.messageID, updateInterval);
-      console.log(`[TelegramRemote] Started update interval for message ${part.messageID}`);
-    } catch (error) {
-      console.error(`[TelegramRemote] Failed to update status message:`, error);
-    }
-  } else if (statusMessageId && hasInterval) {
-    console.log(
-      `[TelegramRemote] Subsequent update for message ${part.messageID}, updating latestUpdate`
-    );
-    context.messageTracker.setLatestUpdate(part.messageID, fullText);
-  }
-}
-
 // src/events/message-updated.ts
 async function handleMessageUpdated(event, context) {
   const logger = createLogger(context.client);
@@ -612,17 +508,14 @@ async function handleMessageUpdated(event, context) {
     context.messageTracker.markAsUser(message.id);
   } else if (message.role === "assistant") {
     context.messageTracker.markAsAssistant(message.id);
-    const topicId = context.sessionStore.getTopicBySession(message.sessionID);
-    if (topicId) {
-      const promptMessageId = context.sessionStore.getPromptMessageId(topicId);
-      if (promptMessageId) {
-        context.messageTracker.setStatusMessageId(message.id, promptMessageId);
-        context.messageTracker.setProcessingPrompt(message.id, true);
-        context.sessionStore.clearPromptMessageId(topicId);
-        console.log(
-          `[TelegramRemote] Linked prompt message ${promptMessageId} to assistant message ${message.id}`
-        );
-      }
+    const promptMessageId = context.sessionStore.getPromptMessageId();
+    if (promptMessageId) {
+      context.messageTracker.setStatusMessageId(message.id, promptMessageId);
+      context.messageTracker.setProcessingPrompt(message.id, true);
+      context.sessionStore.clearPromptMessageId();
+      console.log(
+        `[TelegramRemote] Linked prompt message ${promptMessageId} to assistant message ${message.id}`
+      );
     }
     if (message.time?.completed) {
       context.messageTracker.setProcessingPrompt(message.id, false);
@@ -631,17 +524,14 @@ async function handleMessageUpdated(event, context) {
       if (content) {
         const lines = content.split("\n");
         if (lines.length > 100) {
-          const topicId2 = context.sessionStore.getTopicBySession(message.sessionID);
-          if (topicId2) {
-            console.log(
-              `[TelegramRemote] Message ${message.id} completed with ${lines.length} lines. Sending as Markdown file.`
-            );
-            try {
-              await context.bot.sendDocument(topicId2, content, "response.md");
-            } catch (error) {
-              console.error("[TelegramRemote] Failed to send document:", error);
-              logger.error("Failed to send document", { error: String(error) });
-            }
+          console.log(
+            `[TelegramRemote] Message ${message.id} completed with ${lines.length} lines. Sending as Markdown file.`
+          );
+          try {
+            await context.bot.sendDocument(content, "response.md");
+          } catch (error) {
+            console.error("[TelegramRemote] Failed to send document:", error);
+            logger.error("Failed to send document", { error: String(error) });
           }
         }
         context.messageTracker.clearAllTracking(message.id);
@@ -653,11 +543,8 @@ async function handleMessageUpdated(event, context) {
 // src/events/session-created.ts
 async function handleSessionCreated(event, context) {
   const sessionId = event.properties.info.id;
-  const topicId = context.sessionStore.getTopicBySession(sessionId);
-  console.log(`[TelegramRemote] Session created: ${sessionId.slice(0, 8)}, topicId: ${topicId}`);
-  if (topicId) {
-    await context.bot.sendMessage(topicId, `\u2705 Session initialized: ${sessionId.slice(0, 8)}`);
-  }
+  console.log(`[TelegramRemote] Session created: ${sessionId.slice(0, 8)}`);
+  await context.bot.sendMessage(`\u2705 Session initialized: ${sessionId.slice(0, 8)}`);
 }
 
 // src/message-tracker.ts
@@ -736,39 +623,26 @@ var MessageTracker = class {
 
 // src/session-store.ts
 var SessionStore = class {
-  topicToSession = /* @__PURE__ */ new Map();
-  sessionToTopic = /* @__PURE__ */ new Map();
-  topicToPromptMessageId = /* @__PURE__ */ new Map();
-  // topicId -> Telegram message ID
-  create(topicId, sessionId) {
-    this.topicToSession.set(topicId, sessionId);
-    this.sessionToTopic.set(sessionId, topicId);
+  activeSessionId = null;
+  promptMessageId = void 0;
+  // Telegram message ID for active prompt
+  setActiveSession(sessionId) {
+    this.activeSessionId = sessionId;
   }
-  getSessionByTopic(topicId) {
-    return this.topicToSession.get(topicId);
+  getActiveSession() {
+    return this.activeSessionId;
   }
-  getTopicBySession(sessionId) {
-    return this.sessionToTopic.get(sessionId);
+  clearActiveSession() {
+    this.activeSessionId = null;
   }
-  has(topicId) {
-    return this.topicToSession.has(topicId);
+  setPromptMessageId(messageId) {
+    this.promptMessageId = messageId;
   }
-  getAllTopicIds() {
-    return Array.from(this.topicToSession.keys());
+  getPromptMessageId() {
+    return this.promptMessageId;
   }
-  setPromptMessageId(topicId, messageId) {
-    this.topicToPromptMessageId.set(topicId, messageId);
-  }
-  getPromptMessageId(topicId) {
-    return this.topicToPromptMessageId.get(topicId);
-  }
-  clearPromptMessageId(topicId) {
-    this.topicToPromptMessageId.delete(topicId);
-  }
-  clearAll() {
-    this.topicToSession.clear();
-    this.sessionToTopic.clear();
-    this.topicToPromptMessageId.clear();
+  clearPromptMessageId() {
+    this.promptMessageId = void 0;
   }
 };
 
@@ -795,78 +669,6 @@ var TelegramRemote = async ({ client }) => {
   console.log("[TelegramRemote] Creating Telegram bot...");
   const bot = createTelegramBot(config, client, logger, sessionStore);
   console.log("[TelegramRemote] Bot created successfully");
-  console.log("[TelegramRemote] Starting async session/topic synchronization...");
-  const initializeTopics = async () => {
-    try {
-      console.log("[TelegramRemote] Fetching existing sessions...");
-      const sessionsResponse = await client.session.list();
-      console.log("[TelegramRemote] Fetching forum topics...");
-      const topicsResponse = await bot.getForumTopics(config.groupId);
-      if (sessionsResponse.error) {
-        console.error("[TelegramRemote] Failed to list sessions:", sessionsResponse.error);
-        logger.error("Failed to list sessions", { error: sessionsResponse.error });
-      } else if (topicsResponse.error) {
-        console.error("[TelegramRemote] Failed to get forum topics:", topicsResponse.error);
-        logger.error("Failed to get forum topics", { error: String(topicsResponse.error) });
-      } else {
-        const allSessions = sessionsResponse.data || [];
-        const topics = topicsResponse.topics || [];
-        const sessions = allSessions.sort((a, b) => b.time.updated - a.time.updated).slice(0, config.maxSessions);
-        console.log(
-          `[TelegramRemote] Found ${allSessions.length} total sessions, syncing ${sessions.length} most recent (limit: ${config.maxSessions})`
-        );
-        console.log(`[TelegramRemote] Found ${topics.length} existing topics`);
-        const topicMap = /* @__PURE__ */ new Map();
-        for (const topic of topics) {
-          topicMap.set(topic.name, topic);
-        }
-        for (const session of sessions) {
-          const baseTitle = session.title || `Session ${session.id.slice(0, 8)}`;
-          const topicName = baseTitle.length > 100 ? `${baseTitle.slice(0, 97)}...` : baseTitle;
-          const existingTopic = topicMap.get(topicName);
-          if (!existingTopic) {
-            try {
-              console.log(
-                `[TelegramRemote] Creating topic "${topicName}" for session ${session.id.slice(0, 8)}...`
-              );
-              const newTopic = await bot.createForumTopic(config.groupId, topicName);
-              sessionStore.create(newTopic.message_thread_id, session.id);
-              logger.info("Created topic for existing session", {
-                sessionId: session.id,
-                topicId: newTopic.message_thread_id,
-                topicName
-              });
-              console.log(
-                `[TelegramRemote] Topic "${topicName}" created for session ${session.id.slice(0, 8)}`
-              );
-            } catch (error) {
-              console.error(
-                `[TelegramRemote] Failed to create topic "${topicName}" for session ${session.id.slice(0, 8)}:`,
-                error
-              );
-              logger.error("Failed to create topic for session", {
-                sessionId: session.id,
-                topicName,
-                error: String(error)
-              });
-            }
-          } else {
-            sessionStore.create(existingTopic.message_thread_id, session.id);
-            console.log(
-              `[TelegramRemote] Mapped existing topic "${topicName}" to session ${session.id.slice(0, 8)}`
-            );
-          }
-        }
-        console.log("[TelegramRemote] Session/topic synchronization completed");
-      }
-    } catch (error) {
-      console.error("[TelegramRemote] Failed to initialize topics:", error);
-      logger.error("Failed to initialize topics", { error: String(error) });
-    }
-  };
-  initializeTopics().catch((error) => {
-    console.error("[TelegramRemote] Unexpected error in topic initialization:", error);
-  });
   console.log("[TelegramRemote] Starting Telegram bot polling...");
   bot.start().catch((error) => {
     console.error("[TelegramRemote] Failed to start bot:", error);

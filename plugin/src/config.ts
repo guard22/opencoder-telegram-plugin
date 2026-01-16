@@ -7,7 +7,6 @@ export interface Config {
   botToken: string;
   groupId: number;
   allowedUserIds: number[];
-  maxSessions: number;
 }
 
 function parseAllowedUserIds(value: string | undefined): number[] {
@@ -27,7 +26,6 @@ export function loadConfig(): Config {
   const botToken = process.env.TELEGRAM_BOT_TOKEN;
   const groupId = process.env.TELEGRAM_GROUP_ID;
   const allowedUserIdsStr = process.env.TELEGRAM_ALLOWED_USER_IDS;
-  const maxSessionsStr = process.env.TELEGRAM_MAX_SESSIONS;
 
   if (!botToken || botToken.trim() === "") {
     console.error("[Config] Missing TELEGRAM_BOT_TOKEN");
@@ -53,25 +51,13 @@ export function loadConfig(): Config {
     );
   }
 
-  // Parse maxSessions with default value of 5
-  let maxSessions = 5;
-  if (maxSessionsStr && maxSessionsStr.trim() !== "") {
-    const parsed = Number.parseInt(maxSessionsStr, 10);
-    if (!Number.isNaN(parsed) && parsed > 0) {
-      maxSessions = parsed;
-    } else {
-      console.warn(`[Config] Invalid TELEGRAM_MAX_SESSIONS (${maxSessionsStr}), using default: 5`);
-    }
-  }
-
   console.log(
-    `[Config] Configuration loaded: groupId=${parsedGroupId}, allowedUsers=${allowedUserIds.length}, maxSessions=${maxSessions}`,
+    `[Config] Configuration loaded: groupId=${parsedGroupId}, allowedUsers=${allowedUserIds.length}`,
   );
 
   return {
     botToken,
     groupId: parsedGroupId,
     allowedUserIds,
-    maxSessions,
   };
 }

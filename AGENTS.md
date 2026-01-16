@@ -5,7 +5,7 @@ This document provides guidelines for AI coding agents working in this codebase.
 ## Project Overview
 
 OpenCoder Telegram Remote Plugin - A plugin that enables remote control of OpenCode
-sessions via Telegram using Topics for session isolation. Built with TypeScript,
+sessions via Telegram in a single chat. Built with TypeScript,
 Grammy (Telegram Bot framework), and the OpenCode Plugin SDK.
 
 ## Tech Stack
@@ -103,7 +103,7 @@ plugin/
 │   ├── telegram-remote.ts    # Main plugin entry point
 │   ├── bot.ts                # Grammy bot setup and handlers
 │   ├── config.ts             # Environment config loader
-│   ├── session-store.ts      # Topic <-> Session mapping
+│   ├── session-store.ts      # Active session tracking
 │   ├── message-tracker.ts    # Message role tracking
 │   └── lib/
 │       ├── config.ts         # Service constants
@@ -151,3 +151,12 @@ Required in `.env`:
 1. Update interface in `plugin/src/config.ts`
 2. Add parsing logic in `loadConfig()`
 3. Update `.env.example` if adding new variables
+
+## Key Architecture Changes
+
+As of the latest update, the plugin has been simplified:
+- **No more topics**: Removed supergroup/topics functionality
+- **Single chat**: All interactions happen in one Telegram chat
+- **Active session**: One active session at a time (tracked in SessionStore)
+- **Simplified bot interface**: Removed `getForumTopics`, `createForumTopic`, `deleteForumTopic` methods
+- **Cleaner message flow**: Messages go to/from the active session directly

@@ -24,7 +24,7 @@ export const TelegramRemote: Plugin = async ({ client }) => {
     console.error("[TelegramRemote] Configuration error:", error);
     logger.error(`Configuration error: ${error}`);
     return {
-      event: async () => { },
+      event: async () => {},
     };
   }
 
@@ -35,96 +35,6 @@ export const TelegramRemote: Plugin = async ({ client }) => {
   console.log("[TelegramRemote] Creating Telegram bot...");
   const bot = createTelegramBot(config, client, logger, sessionStore);
   console.log("[TelegramRemote] Bot created successfully");
-
-  // Initialize missing topics for existing sessions (async, non-blocking)
-  console.log("[TelegramRemote] Starting async session/topic synchronization...");
-  const initializeTopics = async () => {
-    try {
-      console.log("[TelegramRemote] Fetching existing sessions...");
-      const sessionsResponse = await client.session.list();
-      console.log("[TelegramRemote] Fetching forum topics...");
-      const topicsResponse = await bot.getForumTopics(config.groupId);
-
-      if (sessionsResponse.error) {
-        console.error("[TelegramRemote] Failed to list sessions:", sessionsResponse.error);
-        logger.error("Failed to list sessions", { error: sessionsResponse.error });
-      } else if (topicsResponse.error) {
-        console.error("[TelegramRemote] Failed to get forum topics:", topicsResponse.error);
-        logger.error("Failed to get forum topics", { error: String(topicsResponse.error) });
-      } else {
-        const allSessions = sessionsResponse.data || [];
-        const topics = topicsResponse.topics || [];
-
-        // Sort sessions by most recently updated and limit to maxSessions
-        const sessions = allSessions
-          .sort((a, b) => b.time.updated - a.time.updated)
-          .slice(0, config.maxSessions);
-
-        console.log(
-          `[TelegramRemote] Found ${allSessions.length} total sessions, syncing ${sessions.length} most recent (limit: ${config.maxSessions})`,
-        );
-        console.log(`[TelegramRemote] Found ${topics.length} existing topics`);
-
-        // Create a map of topic names to topics for quick lookup
-        const topicMap = new Map<string, any>();
-        for (const topic of topics) {
-          topicMap.set(topic.name, topic);
-        }
-
-        for (const session of sessions) {
-          // Use session title with fallback to session ID
-          // Telegram topics have a 128 character limit, so we truncate if needed
-          const baseTitle = session.title || `Session ${session.id.slice(0, 8)}`;
-          const topicName = baseTitle.length > 100 ? `${baseTitle.slice(0, 97)}...` : baseTitle;
-          const existingTopic = topicMap.get(topicName);
-
-          if (!existingTopic) {
-            // Create missing topic
-            try {
-              console.log(
-                `[TelegramRemote] Creating topic "${topicName}" for session ${session.id.slice(0, 8)}...`,
-              );
-              const newTopic = await bot.createForumTopic(config.groupId, topicName);
-              sessionStore.create(newTopic.message_thread_id, session.id);
-              logger.info("Created topic for existing session", {
-                sessionId: session.id,
-                topicId: newTopic.message_thread_id,
-                topicName,
-              });
-              console.log(
-                `[TelegramRemote] Topic "${topicName}" created for session ${session.id.slice(0, 8)}`,
-              );
-            } catch (error) {
-              console.error(
-                `[TelegramRemote] Failed to create topic "${topicName}" for session ${session.id.slice(0, 8)}:`,
-                error,
-              );
-              logger.error("Failed to create topic for session", {
-                sessionId: session.id,
-                topicName,
-                error: String(error),
-              });
-            }
-          } else {
-            // Topic exists, add to session store
-            sessionStore.create(existingTopic.message_thread_id, session.id);
-            console.log(
-              `[TelegramRemote] Mapped existing topic "${topicName}" to session ${session.id.slice(0, 8)}`,
-            );
-          }
-        }
-        console.log("[TelegramRemote] Session/topic synchronization completed");
-      }
-    } catch (error) {
-      console.error("[TelegramRemote] Failed to initialize topics:", error);
-      logger.error("Failed to initialize topics", { error: String(error) });
-    }
-  };
-
-  // Run initialization in background (non-blocking)
-  initializeTopics().catch((error) => {
-    console.error("[TelegramRemote] Unexpected error in topic initialization:", error);
-  });
 
   console.log("[TelegramRemote] Starting Telegram bot polling...");
   bot.start().catch((error) => {
