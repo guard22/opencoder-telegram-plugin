@@ -9,6 +9,18 @@ export async function handleMessageUpdated(
   const message = event.properties.info;
   console.log(`[TelegramRemote] Message updated: ${message.id}, role: ${message.role}`);
 
+  // Check if there's a summary body to send as a temporary message
+  if (message.summary?.body) {
+    console.log(`[TelegramRemote] Sending summary body for message ${message.id}`);
+    try {
+      await context.bot.sendTemporaryMessage(message.summary.body);
+      console.log(`[TelegramRemote] Summary body sent and will be deleted after timeout`);
+    } catch (error) {
+      console.error("[TelegramRemote] Failed to send summary body:", error);
+      logger.error("Failed to send summary body", { error: String(error) });
+    }
+  }
+
   if (message.role === "user") {
     context.messageTracker.markAsUser(message.id);
   } else if (message.role === "assistant") {

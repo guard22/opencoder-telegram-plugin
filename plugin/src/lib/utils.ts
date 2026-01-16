@@ -1,19 +1,19 @@
-import type { Bot } from "grammy";
-import { writeFileSync } from "node:fs";
+import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import type { Bot } from "grammy";
 import type { TelegramQueue } from "./telegram-queue.js";
 
 /**
  * Writes an event to a JSON file in the /debug folder for debugging purposes
  * @param event - The event object to write
  */
-export function writeEventToDebugFile(event: { type: string;[key: string]: unknown }): void {
+export function writeEventToDebugFile(event: { type: string; [key: string]: unknown }): void {
   try {
     const debugDir = join(process.cwd(), "debug");
+    mkdirSync(debugDir, { recursive: true });
     const filename = `${event.type}.json`;
     const filepath = join(debugDir, filename);
     writeFileSync(filepath, JSON.stringify(event, null, 2), { flag: "w" });
-    console.log(`[TelegramRemote] Event written to ${filepath}`);
   } catch (error) {
     console.error(`[TelegramRemote] Failed to write event to file:`, error);
   }

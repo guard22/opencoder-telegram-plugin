@@ -17,6 +17,7 @@ export interface TelegramBotManager {
   editMessage(messageId: number, text: string): Promise<void>;
   queue: TelegramQueue;
   sendDocument(document: string | Uint8Array, filename: string): Promise<void>;
+  sendTemporaryMessage(text: string, durationMs?: number): Promise<void>;
 }
 
 let botInstance: Bot | null = null;
@@ -132,6 +133,13 @@ function createBotManager(bot: Bot, config: Config, queue: TelegramQueue): Teleg
           new InputFile(typeof document === "string" ? Buffer.from(document) : document, filename),
         ),
       );
+    },
+
+    async sendTemporaryMessage(text: string, durationMs: number = 10000) {
+      console.log(
+        `[Bot] sendTemporaryMessage: "${text.slice(0, 50)}..." (duration: ${durationMs}ms)`,
+      );
+      await sendTemporaryMessage(bot, config.groupId, text, durationMs, queue);
     },
 
     queue,

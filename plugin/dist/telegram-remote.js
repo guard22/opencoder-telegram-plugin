@@ -251,15 +251,15 @@ var TelegramQueue = class {
 };
 
 // src/lib/utils.ts
-import { writeFileSync } from "fs";
+import { mkdirSync, writeFileSync } from "fs";
 import { join } from "path";
 function writeEventToDebugFile(event) {
   try {
     const debugDir = join(process.cwd(), "debug");
+    mkdirSync(debugDir, { recursive: true });
     const filename = `${event.type}.json`;
     const filepath = join(debugDir, filename);
     writeFileSync(filepath, JSON.stringify(event, null, 2), { flag: "w" });
-    console.log(`[TelegramRemote] Event written to ${filepath}`);
   } catch (error) {
     console.error(`[TelegramRemote] Failed to write event to file:`, error);
   }
@@ -374,6 +374,12 @@ function createBotManager(bot, config, queue) {
         )
       );
     },
+    async sendTemporaryMessage(text, durationMs = 1e4) {
+      console.log(
+        `[Bot] sendTemporaryMessage: "${text.slice(0, 50)}..." (duration: ${durationMs}ms)`
+      );
+      await sendTemporaryMessage(bot, config.groupId, text, durationMs, queue);
+    },
     queue
   };
 }
@@ -452,6 +458,16 @@ async function handleMessageUpdated(event, context) {
   const logger = createLogger(context.client);
   const message = event.properties.info;
   console.log(`[TelegramRemote] Message updated: ${message.id}, role: ${message.role}`);
+  if (message.summary?.body) {
+    console.log(`[TelegramRemote] Sending summary body for message ${message.id}`);
+    try {
+      await context.bot.sendTemporaryMessage(message.summary.body);
+      console.log(`[TelegramRemote] Summary body sent and will be deleted after timeout`);
+    } catch (error) {
+      console.error("[TelegramRemote] Failed to send summary body:", error);
+      logger.error("Failed to send summary body", { error: String(error) });
+    }
+  }
   if (message.role === "user") {
     context.messageTracker.markAsUser(message.id);
   } else if (message.role === "assistant") {
