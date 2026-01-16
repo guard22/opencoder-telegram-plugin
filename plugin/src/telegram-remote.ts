@@ -3,11 +3,11 @@ import { createTelegramBot } from "./bot.js";
 import { type Config, loadConfig } from "./config.js";
 import {
   type EventHandlerContext,
-  handleMessagePartUpdated,
   handleMessageUpdated,
   handleSessionCreated,
 } from "./events/index.js";
 import { createLogger } from "./lib/logger.js";
+import { writeEventToDebugFile } from "./lib/utils.js";
 import { MessageTracker } from "./message-tracker.js";
 import { SessionStore } from "./session-store.js";
 
@@ -24,7 +24,7 @@ export const TelegramRemote: Plugin = async ({ client }) => {
     console.error("[TelegramRemote] Configuration error:", error);
     logger.error(`Configuration error: ${error}`);
     return {
-      event: async () => {},
+      event: async () => { },
     };
   }
 
@@ -88,20 +88,22 @@ export const TelegramRemote: Plugin = async ({ client }) => {
     messageTracker,
   };
 
+  // Event type to handler mapping
+  const eventHandlers = {
+    "session.created": handleSessionCreated,
+    "message.updated": handleMessageUpdated,
+  } as const;
+
   return {
     event: async ({ event }) => {
       console.log(`[TelegramRemote] Event received: ${event.type}`);
 
-      if (event.type === "session.created") {
-        await handleSessionCreated(event, eventContext);
-      }
+      // Write event to debug file
+      writeEventToDebugFile(event);
 
-      if (event.type === "message.updated") {
-        await handleMessageUpdated(event, eventContext);
-      }
-
-      if (event.type === "message.part.updated") {
-        await handleMessagePartUpdated(event, eventContext);
+      const handler = eventHandlers[event.type as keyof typeof eventHandlers];
+      if (handler) {
+        await handler(event, eventContext);
       }
     },
   };

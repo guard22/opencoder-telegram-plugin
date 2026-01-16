@@ -1,0 +1,12 @@
+{
+  "type": "message.part.updated",
+  "properties": {
+    "part": {
+      "id": "prt_bc5d850b8001h1hwf0WIO8Daty",
+      "sessionID": "ses_43a27af92ffeGSAvywh46UyqkP",
+      "messageID": "msg_bc5d850820015OJ1Pmbx8iboDd",
+      "type": "text",
+      "text": "Summarise the readme for me"
+    }
+  }
+}

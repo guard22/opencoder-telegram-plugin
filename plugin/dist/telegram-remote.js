@@ -251,6 +251,19 @@ var TelegramQueue = class {
 };
 
 // src/lib/utils.ts
+import { writeFileSync } from "fs";
+import { join } from "path";
+function writeEventToDebugFile(event) {
+  try {
+    const debugDir = join(process.cwd(), "debug");
+    const filename = `${event.type}.json`;
+    const filepath = join(debugDir, filename);
+    writeFileSync(filepath, JSON.stringify(event, null, 2), { flag: "w" });
+    console.log(`[TelegramRemote] Event written to ${filepath}`);
+  } catch (error) {
+    console.error(`[TelegramRemote] Failed to write event to file:`, error);
+  }
+}
 async function sendTemporaryMessage(bot, chatId, text, durationMs = 1e3, queue) {
   try {
     const sendFn = () => bot.api.sendMessage(chatId, text);
@@ -408,71 +421,6 @@ function loadConfig() {
     groupId: parsedGroupId,
     allowedUserIds
   };
-}
-
-// src/events/message-part-updated.ts
-var MAX_MESSAGE_SIZE = 5 * 1024 * 1024;
-async function handleMessagePartUpdated(event, context) {
-  const part = event.properties.part;
-  if (part.type !== "text") {
-    return;
-  }
-  const isAssistantMessage = context.messageTracker.isAssistant(part.messageID);
-  if (!isAssistantMessage) {
-    return;
-  }
-  const delta = event.properties.delta;
-  if (delta) {
-    const currentContent = context.messageTracker.getContent(part.messageID) || "";
-    if (currentContent.length + delta.length > MAX_MESSAGE_SIZE) {
-      console.warn(
-        `[TelegramRemote] Message ${part.messageID} exceeded ${MAX_MESSAGE_SIZE} bytes. Truncating.`
-      );
-    } else {
-      context.messageTracker.updateContent(part.messageID, currentContent + delta);
-    }
-  }
-  const fullText = context.messageTracker.getContent(part.messageID) || "";
-  const statusMessageId = context.messageTracker.getStatusMessageId(part.messageID);
-  const hasInterval = context.messageTracker.getLatestUpdate(part.messageID) !== void 0;
-  if (statusMessageId && !hasInterval) {
-    console.log(
-      `[TelegramRemote] First update for message ${part.messageID}, updating status message`
-    );
-    try {
-      await context.bot.editMessage(statusMessageId, fullText || "Processing...");
-      context.messageTracker.setLatestUpdate(part.messageID, fullText);
-      let lastSentText = fullText;
-      const updateInterval = setInterval(async () => {
-        if (!context.messageTracker.isProcessingPrompt(part.messageID)) {
-          console.log(
-            `[TelegramRemote] Processing complete for message ${part.messageID}, stopping interval`
-          );
-          context.messageTracker.clearUpdateInterval(part.messageID);
-          return;
-        }
-        const currentLatest = context.messageTracker.getLatestUpdate(part.messageID);
-        if (currentLatest && currentLatest !== lastSentText) {
-          try {
-            await context.bot.editMessage(statusMessageId, currentLatest);
-            lastSentText = currentLatest;
-            console.log(`[TelegramRemote] Updated status message for ${part.messageID}`);
-          } catch (error) {
-            console.error(`[TelegramRemote] Failed to update status message:`, error);
-          }
-        }
-      }, 500);
-      context.messageTracker.setUpdateInterval(part.messageID, updateInterval);
-      console.log(`[TelegramRemote] Started update interval for message ${part.messageID}`);
-    } catch (error) {
-      console.error(`[TelegramRemote] Failed to update status message:`, error);
-    }
-  } else if (statusMessageId && hasInterval) {
-    console.log(
-      `[TelegramRemote] Subsequent update for message ${part.messageID}, updating latestUpdate`
-    );
-    context.messageTracker.setLatestUpdate(part.messageID, fullText);
-  }
 }
 
 // src/lib/config.ts
@@ -714,17 +662,17 @@ var TelegramRemote = async ({ client }) => {
     sessionStore,
     messageTracker
   };
+  const eventHandlers = {
+    "session.created": handleSessionCreated,
+    "message.updated": handleMessageUpdated
+  };
   return {
     event: async ({ event }) => {
       console.log(`[TelegramRemote] Event received: ${event.type}`);
-      if (event.type === "session.created") {
-        await handleSessionCreated(event, eventContext);
-      }
-      if (event.type === "message.updated") {
-        await handleMessageUpdated(event, eventContext);
-      }
-      if (event.type === "message.part.updated") {
-        await handleMessagePartUpdated(event, eventContext);
+      writeEventToDebugFile(event);
+      const handler = eventHandlers[event.type];
+      if (handler) {
+        await handler(event, eventContext);
       }
     }
   };

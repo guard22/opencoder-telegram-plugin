@@ -1,0 +1,16 @@
+{
+  "type": "session.created",
+  "properties": {
+    "info": {
+      "id": "ses_43a27af92ffeGSAvywh46UyqkP",
+      "version": "1.1.14",
+      "projectID": "d39419f8e648ca8163a519f6940260a1897c53a3",
+      "directory": "/home/tom/opencoder-telegram-remote-plugin",
+      "title": "New session - 2026-01-16T08:07:26.573Z",
+      "time": {
+        "created": 1768550846573,
+        "updated": 1768550846573
+      }
+    }
+  }
+}

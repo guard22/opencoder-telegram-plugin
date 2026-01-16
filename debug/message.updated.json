@@ -1,0 +1,21 @@
+{
+  "type": "message.updated",
+  "properties": {
+    "info": {
+      "id": "msg_bc5d850820015OJ1Pmbx8iboDd",
+      "sessionID": "ses_43a27af92ffeGSAvywh46UyqkP",
+      "role": "user",
+      "time": {
+        "created": 1768550846594
+      },
+      "summary": {
+        "diffs": []
+      },
+      "agent": "build",
+      "model": {
+        "providerID": "github-copilot",
+        "modelID": "gemini-3-pro-preview"
+      }
+    }
+  }
+}
