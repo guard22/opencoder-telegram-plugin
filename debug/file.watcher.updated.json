@@ -1,7 +1,0 @@
-{
-  "type": "file.watcher.updated",
-  "properties": {
-    "file": "/home/tom/opencoder-telegram-remote-plugin/.git/index.lock",
-    "event": "unlink"
-  }
-}
