@@ -11,8 +11,11 @@
     "predev": "npm run build"
   },
   "dependencies": {
-    "grammy": "^1.34.0",
-    "dotenv": "^16.4.7"
+    "@ai-sdk/openai": "^3.0.12",
+    "@google/genai": "^1.37.0",
+    "ai": "^6.0.39",
+    "dotenv": "^16.4.7",
+    "grammy": "^1.34.0"
   },
   "devDependencies": {
     "@opencode-ai/plugin": "1.0.203",

@@ -13,6 +13,7 @@ export class GlobalStateStore {
   private currentAgent: string | null = null;
   private currentSessionTitle: string | null = null;
   private sessionStatus: string | null = null;
+  private lastMessagePartUpdate: string | null = null;
 
   constructor(allowedEventTypes: string[]) {
     this.allowedEventTypes = new Set(allowedEventTypes);
@@ -75,5 +76,13 @@ export class GlobalStateStore {
 
   getSessionStatus(): string | null {
     return this.sessionStatus;
+  }
+
+  setLastMessagePartUpdate(text: string): void {
+    this.lastMessagePartUpdate = text;
+  }
+
+  getLastMessagePartUpdate(): string | null {
+    return this.lastMessagePartUpdate;
   }
 }

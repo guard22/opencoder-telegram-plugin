@@ -118,7 +118,7 @@ function createHelpCommandHandler({ config }) {
       await ctx.reply("You are not authorized to use this bot.");
       return;
     }
-    const helpMessage = "Available commands:\n\n/new - Create a new OpenCode session.\n/deletesessions - Delete all OpenCode sessions.\n/help - Show this help message.\n\nUsage:\n- Use /new to create a new session.\n- Send messages in this chat to interact with the active session.\n- Admin-only commands (like /deletesessions) are restricted to configured users.\n\nNote: All commands require you to be a configured allowed user. The bot enforces this via its middleware and command-level checks.";
+    const helpMessage = "Available commands:\n\n/new - Create a new OpenCode session.\n/deletesessions - Delete all OpenCode sessions.\n/help - Show this help message.\n\nUsage:\n- Use /new to create a new session.\n- Send messages in this chat to interact with the active session.\n- Send voice messages or audio files (max 25MB) to transcribe and send them as prompts.\n- Admin-only commands (like /deletesessions) are restricted to configured users.\n\nNote: All commands require you to be a configured allowed user. The bot enforces this via its middleware and command-level checks.";
     await ctx.reply(helpMessage);
   };
 }
@@ -226,7 +226,10 @@ function createSessionsCommandHandler({ config, client, logger, bot }) {
         await bot.sendTemporaryMessage("No active sessions found.");
         return;
       }
-      const sessionList = sessions.map((s) => `- \`${s.id}\``).join("\n");
+      const sessionList = sessions.map((s) => {
+        const title = s.title || s.properties?.info?.title;
+        return title ? `- ${title} (\`${s.id}\`)` : `- \`${s.id}\``;
+      }).join("\n");
       const message = `Found ${sessions.length} active sessions:
 
 ${sessionList}`;
@@ -234,6 +237,176 @@ ${sessionList}`;
     } catch (error) {
       logger.error("Failed to list sessions", { error: String(error) });
       await bot.sendTemporaryMessage("\u274C Failed to list sessions");
+    }
+  };
+}
+
+// src/commands/audio-message.command.ts
+import { writeFile, mkdir } from "fs/promises";
+import { join } from "path";
+import { tmpdir } from "os";
+
+// src/lib/audio-transcription.ts
+import { createOpenAI } from "@ai-sdk/openai";
+import { experimental_transcribe as transcribe } from "ai";
+import { GoogleGenAI, createUserContent, createPartFromUri } from "@google/genai";
+import { readFile, unlink } from "fs/promises";
+async function transcribeWithOpenAI(audioFilePath, apiKey, logger) {
+  try {
+    const audioBuffer = await readFile(audioFilePath);
+    const openaiProvider = createOpenAI({ apiKey });
+    const { text } = await transcribe({
+      model: openaiProvider.transcription("whisper-1"),
+      audio: audioBuffer
+    });
+    return { text };
+  } catch (error) {
+    const errorMessage = error instanceof Error ? error.message : String(error);
+    logger.error("OpenAI transcription failed", { error: errorMessage });
+    return { text: "", error: errorMessage };
+  }
+}
+async function transcribeWithGemini(audioFilePath, apiKey, mimeType, logger) {
+  try {
+    const ai = new GoogleGenAI({ apiKey });
+    const uploadedFile = await ai.files.upload({
+      file: audioFilePath,
+      config: { mimeType }
+    });
+    if (!uploadedFile.uri) {
+      throw new Error("Failed to get URI for uploaded file");
+    }
+    const response = await ai.models.generateContent({
+      model: "gemini-1.5-flash",
+      contents: createUserContent([
+        createPartFromUri(uploadedFile.uri || "", uploadedFile.mimeType || "audio/ogg"),
+        "Transcribe this audio file. Return only the transcribed text without any additional formatting, explanations, or markdown."
+      ])
+    });
+    const text = response.text || "";
+    return { text };
+  } catch (error) {
+    const errorMessage = error instanceof Error ? error.message : String(error);
+    logger.error("Gemini transcription failed", { error: errorMessage });
+    return { text: "", error: errorMessage };
+  }
+}
+async function transcribeAudio(audioFilePath, config, mimeType, logger) {
+  logger.info("Starting audio transcription", {
+    provider: config.provider,
+    mimeType
+  });
+  const result = config.provider === "openai" ? await transcribeWithOpenAI(audioFilePath, config.apiKey, logger) : await transcribeWithGemini(audioFilePath, config.apiKey, mimeType, logger);
+  try {
+    await unlink(audioFilePath);
+    logger.debug("Cleaned up audio file", { audioFilePath });
+  } catch (error) {
+    logger.warn("Failed to clean up audio file", { error: String(error) });
+  }
+  return result;
+}
+
+// src/commands/audio-message.command.ts
+var SUPPORTED_FORMATS = [
+  "audio/ogg",
+  "audio/mpeg",
+  "audio/wav",
+  "audio/webm",
+  "audio/m4a",
+  "audio/flac",
+  "audio/opus"
+];
+var MAX_FILE_SIZE = 25 * 1024 * 1024;
+function createAudioMessageHandler({ config, client, logger, sessionStore }) {
+  return async (ctx) => {
+    console.log("[Bot] Audio/voice message received");
+    if (!config.audioTranscriptionApiKey || !config.audioTranscriptionProvider) {
+      await ctx.reply(
+        "\u{1F399}\uFE0F Voice transcription is not configured. Please add AUDIO_TRANSCRIPTION_API_KEY to .env"
+      );
+      return;
+    }
+    if (ctx.chat?.id !== config.groupId) return;
+    const voice = ctx.message?.voice;
+    const audio = ctx.message?.audio;
+    const fileToDownload = voice || audio;
+    if (!fileToDownload) {
+      await ctx.reply("\u274C No audio file found in message");
+      return;
+    }
+    if (fileToDownload.file_size && fileToDownload.file_size > MAX_FILE_SIZE) {
+      await ctx.reply("\u274C Audio file too large (max 25MB)");
+      return;
+    }
+    const mimeType = fileToDownload.mime_type || "audio/ogg";
+    if (!SUPPORTED_FORMATS.includes(mimeType)) {
+      await ctx.reply(`\u274C Unsupported audio format: ${mimeType}`);
+      return;
+    }
+    try {
+      const file = await ctx.getFile();
+      const fileUrl = `https://api.telegram.org/file/bot${config.botToken}/${file.file_path}`;
+      const tempDir = join(tmpdir(), "opencode-audio");
+      await mkdir(tempDir, { recursive: true });
+      const timestamp = Date.now();
+      const extension = mimeType.split("/")[1] || "ogg";
+      const tempFilePath = join(tempDir, `voice_${timestamp}.${extension}`);
+      const response = await fetch(fileUrl);
+      if (!response.ok) {
+        throw new Error(`Failed to download audio file: ${response.statusText}`);
+      }
+      const arrayBuffer = await response.arrayBuffer();
+      await writeFile(tempFilePath, Buffer.from(arrayBuffer));
+      logger.info("Downloaded audio file", { tempFilePath, mimeType });
+      const processingMsg = await ctx.reply("\u{1F399}\uFE0F Transcribing audio...");
+      const result = await transcribeAudio(
+        tempFilePath,
+        {
+          apiKey: config.audioTranscriptionApiKey,
+          provider: config.audioTranscriptionProvider
+        },
+        mimeType,
+        logger
+      );
+      await ctx.api.deleteMessage(config.groupId, processingMsg.message_id);
+      if (result.error || !result.text.trim()) {
+        await ctx.reply(`\u274C Transcription failed: ${result.error || "Empty transcription"}`);
+        return;
+      }
+      logger.info("Transcription successful", { textLength: result.text.length });
+      let sessionId = sessionStore.getActiveSession();
+      if (!sessionId) {
+        const createSessionResponse = await client.session.create({ body: {} });
+        if (createSessionResponse.error) {
+          logger.error("Failed to create session", { error: createSessionResponse.error });
+          await ctx.reply("\u274C Failed to initialize session for voice transcription");
+          return;
+        }
+        sessionId = createSessionResponse.data.id;
+        sessionStore.setActiveSession(sessionId);
+        logger.info("Auto-created session for voice message", { sessionId });
+      }
+      const promptResponse = await client.session.prompt({
+        path: { id: sessionId },
+        body: {
+          parts: [{ type: "text", text: result.text }]
+        }
+      });
+      if (promptResponse.error) {
+        logger.error("Failed to send transcription to OpenCode", {
+          error: promptResponse.error
+        });
+        await ctx.reply("\u274C Failed to send transcription to OpenCode");
+        return;
+      }
+      await ctx.reply(`\u2705 Transcribed and sent:
+\`${result.text}\``, {
+        parse_mode: "Markdown"
+      });
+      logger.debug("Sent transcription to OpenCode", { sessionId });
+    } catch (error) {
+      logger.error("Audio message handling failed", { error: String(error) });
+      await ctx.reply(`\u274C Failed to process audio: ${String(error)}`);
     }
   };
 }
@@ -330,13 +503,16 @@ var TelegramQueue = class {
 
 // src/lib/utils.ts
 import { mkdirSync, writeFileSync } from "fs";
-import { join } from "path";
-function writeEventToDebugFile(event, overwrite = false) {
+import { join as join2 } from "path";
+function writeEventToDebugFile(event, overwrite = false, excludeEvents = []) {
+  if (excludeEvents.includes(event.type)) {
+    return;
+  }
   try {
-    const debugDir = join(process.cwd(), "debug");
+    const debugDir = join2(process.cwd(), "debug");
     mkdirSync(debugDir, { recursive: true });
     const filename = overwrite ? `${event.type}.json` : `${Date.now()}.${event.type}.json`;
-    const filepath = join(debugDir, filename);
+    const filepath = join2(debugDir, filename);
     writeFileSync(filepath, JSON.stringify(event, null, 2), { flag: "w" });
   } catch (error) {
     console.error(`[TelegramRemote] Failed to write event to file:`, error);
@@ -408,6 +584,8 @@ function createTelegramBot(config, client, logger, sessionStore, globalStateStor
   bot.command("agents", createAgentsCommandHandler(commandDeps));
   bot.command("help", createHelpCommandHandler(commandDeps));
   bot.on("message:text", createMessageTextHandler(commandDeps));
+  bot.on("message:voice", createAudioMessageHandler(commandDeps));
+  bot.on("message:audio", createAudioMessageHandler(commandDeps));
   bot.catch((error) => {
     console.error("[Bot] Bot error caught:", error);
     logger.error("Bot error", { error: String(error) });
@@ -501,13 +679,23 @@ function loadConfig() {
       "Missing or invalid TELEGRAM_ALLOWED_USER_IDS (must be comma-separated numeric user IDs)"
     );
   }
+  const audioApiKey = process.env.AUDIO_TRANSCRIPTION_API_KEY || process.env.OPENAI_API_KEY || process.env.GOOGLE_GEMINI_API_KEY;
+  let audioProvider = null;
+  if (audioApiKey) {
+    audioProvider = audioApiKey.startsWith("sk-") ? "openai" : "gemini";
+    console.log(`[Config] Audio transcription enabled with ${audioProvider}`);
+  } else {
+    console.log("[Config] Audio transcription disabled (no API key)");
+  }
   console.log(
     `[Config] Configuration loaded: groupId=${parsedGroupId}, allowedUsers=${allowedUserIds.length}`
   );
   return {
     botToken,
     groupId: parsedGroupId,
-    allowedUserIds
+    allowedUserIds,
+    audioTranscriptionApiKey: audioApiKey,
+    audioTranscriptionProvider: audioProvider
   };
 }
 
@@ -866,8 +1054,7 @@ var TelegramRemote = async ({ client }) => {
   };
   return {
     event: async ({ event }) => {
-      console.log(`[TelegramRemote] Event received: ${event.type}`);
-      writeEventToDebugFile(event, false);
+      writeEventToDebugFile(event, false, []);
       globalStateStore.addEvent(event.type, event);
       const handler = eventHandlers[event.type];
       if (handler) {

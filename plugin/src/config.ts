@@ -7,6 +7,8 @@ export interface Config {
   botToken: string;
   groupId: number;
   allowedUserIds: number[];
+  audioTranscriptionApiKey?: string;
+  audioTranscriptionProvider?: "openai" | "gemini" | null;
 }
 
 function parseAllowedUserIds(value: string | undefined): number[] {
@@ -51,6 +53,20 @@ export function loadConfig(): Config {
     );
   }
 
+  const audioApiKey =
+    process.env.AUDIO_TRANSCRIPTION_API_KEY ||
+    process.env.OPENAI_API_KEY ||
+    process.env.GOOGLE_GEMINI_API_KEY;
+
+  let audioProvider: "openai" | "gemini" | null = null;
+  if (audioApiKey) {
+    // Auto-detect provider based on key format
+    audioProvider = audioApiKey.startsWith("sk-") ? "openai" : "gemini";
+    console.log(`[Config] Audio transcription enabled with ${audioProvider}`);
+  } else {
+    console.log("[Config] Audio transcription disabled (no API key)");
+  }
+
   console.log(
     `[Config] Configuration loaded: groupId=${parsedGroupId}, allowedUsers=${allowedUserIds.length}`,
   );
@@ -59,5 +75,7 @@ export function loadConfig(): Config {
     botToken,
     groupId: parsedGroupId,
     allowedUserIds,
+    audioTranscriptionApiKey: audioApiKey,
+    audioTranscriptionProvider: audioProvider,
   };
 }

@@ -24,6 +24,7 @@ export function createHelpCommandHandler({ config }: CommandDeps) {
       "Usage:\n" +
       "- Use /new to create a new session.\n" +
       "- Send messages in this chat to interact with the active session.\n" +
+      "- Send voice messages or audio files (max 25MB) to transcribe and send them as prompts.\n" +
       "- Admin-only commands (like /deletesessions) are restricted to configured users.\n" +
       "\n" +
       "Note: All commands require you to be a configured allowed user. The bot enforces this via its middleware and command-level checks.";

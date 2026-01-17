@@ -7,6 +7,7 @@ import {
   createNewCommandHandler,
   createSessionsCommandHandler,
 } from "./commands/index.js";
+import { createAudioMessageHandler } from "./commands/audio-message.command.js";
 import type { Config } from "./config.js";
 import type { GlobalStateStore } from "./global-state-store.js";
 import type { Logger } from "./lib/logger.js";
@@ -87,6 +88,8 @@ export function createTelegramBot(
   bot.command("help", createHelpCommandHandler(commandDeps));
 
   bot.on("message:text", createMessageTextHandler(commandDeps));
+  bot.on("message:voice", createAudioMessageHandler(commandDeps));
+  bot.on("message:audio", createAudioMessageHandler(commandDeps));
 
   bot.catch((error) => {
     console.error("[Bot] Bot error caught:", error);

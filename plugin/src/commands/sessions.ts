@@ -22,7 +22,12 @@ export function createSessionsCommandHandler({ config, client, logger, bot }: Co
         return;
       }
 
-      const sessionList = sessions.map((s) => `- \`${s.id}\``).join("\n");
+      const sessionList = sessions
+        .map((s: any) => {
+          const title = s.title || s.properties?.info?.title;
+          return title ? `- ${title} (\`${s.id}\`)` : `- \`${s.id}\``;
+        })
+        .join("\n");
       const message = `Found ${sessions.length} active sessions:\n\n${sessionList}`;
 
       // Display for 30 seconds

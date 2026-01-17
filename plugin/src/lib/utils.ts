@@ -7,11 +7,18 @@ import type { TelegramQueue } from "./telegram-queue.js";
  * Writes an event to a JSON file in the /debug folder for debugging purposes
  * @param event - The event object to write
  * @param overwrite - If true, overwrites existing file. If false, prepends Unix epoch to filename (default: false)
+ * @param excludeEvents - Array of event types that should not be written to debug files (default: [])
  */
 export function writeEventToDebugFile(
-  event: { type: string; [key: string]: unknown },
+  event: { type: string;[key: string]: unknown },
   overwrite: boolean = false,
+  excludeEvents: string[] = [],
 ): void {
+  // Skip writing if event type is in the exclusion list
+  if (excludeEvents.includes(event.type)) {
+    return;
+  }
+
   try {
     const debugDir = join(process.cwd(), "debug");
     mkdirSync(debugDir, { recursive: true });
