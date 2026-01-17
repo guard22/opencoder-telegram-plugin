@@ -1,4 +1,5 @@
 import { Bot, type Context, InputFile } from "grammy";
+import { createAudioMessageHandler } from "./commands/audio-message.command.js";
 import {
   createAgentsCommandHandler,
   createDeleteSessionsCommandHandler,
@@ -7,19 +8,20 @@ import {
   createNewCommandHandler,
   createSessionsCommandHandler,
 } from "./commands/index.js";
-import { createAudioMessageHandler } from "./commands/audio-message.command.js";
+import { createQuestionCallbackHandler } from "./commands/question-callback.command.js";
 import type { Config } from "./config.js";
 import type { GlobalStateStore } from "./global-state-store.js";
 import type { Logger } from "./lib/logger.js";
 import { TelegramQueue } from "./lib/telegram-queue.js";
 import type { OpencodeClient } from "./lib/types.js";
 import { sendTemporaryMessage } from "./lib/utils.js";
+import type { QuestionTracker } from "./question-tracker.js";
 import type { SessionStore } from "./session-store.js";
 
 export interface TelegramBotManager {
   start(): Promise<void>;
   stop(): Promise<void>;
-  sendMessage(text: string): Promise<{ message_id: number }>;
+  sendMessage(text: string, options?: any): Promise<{ message_id: number }>;
   editMessage(messageId: number, text: string): Promise<void>;
   queue: TelegramQueue;
   sendDocument(document: string | Uint8Array, filename: string): Promise<void>;
@@ -40,6 +42,7 @@ export function createTelegramBot(
   logger: Logger,
   sessionStore: SessionStore,
   globalStateStore: GlobalStateStore,
+  questionTracker: QuestionTracker,
 ): TelegramBotManager {
   console.log("[Bot] createTelegramBot called");
 
@@ -79,6 +82,7 @@ export function createTelegramBot(
     sessionStore,
     queue,
     globalStateStore,
+    questionTracker,
   };
 
   bot.command("new", createNewCommandHandler(commandDeps));
@@ -90,6 +94,9 @@ export function createTelegramBot(
   bot.on("message:text", createMessageTextHandler(commandDeps));
   bot.on("message:voice", createAudioMessageHandler(commandDeps));
   bot.on("message:audio", createAudioMessageHandler(commandDeps));
+
+  // Register callback query handler for questions
+  bot.on("callback_query:data", createQuestionCallbackHandler(commandDeps));
 
   bot.catch((error) => {
     console.error("[Bot] Bot error caught:", error);
@@ -125,10 +132,10 @@ function createBotManager(bot: Bot, config: Config, queue: TelegramQueue): Teleg
       console.log("[Bot] Bot stopped and instance cleared");
     },
 
-    async sendMessage(text: string) {
+    async sendMessage(text: string, options?: any) {
       console.log(`[Bot] sendMessage: "${text.slice(0, 50)}..."`);
       // Use queue to avoid rate limiting
-      const result = await queue.enqueue(() => bot.api.sendMessage(config.groupId, text));
+      const result = await queue.enqueue(() => bot.api.sendMessage(config.groupId, text, options));
       return { message_id: result.message_id };
     },
 

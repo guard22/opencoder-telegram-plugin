@@ -23,6 +23,9 @@ export interface QuestionAskedEvent {
     tool?: {
       messageID: string;
       callID: string;
+    };
+  };
+}
 
 export interface QuestionSessionState {
   questionId: string;

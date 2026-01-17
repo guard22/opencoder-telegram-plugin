@@ -1,4 +1,4 @@
-import { Question, QuestionSessionState } from "./lib/types.js";
+import type { Question, QuestionSessionState } from "./lib/types.js";
 
 export class QuestionTracker {
   private sessions: Map<string, QuestionSessionState> = new Map();
@@ -28,7 +28,19 @@ export class QuestionTracker {
     this.sessions.delete(questionId);
   }
 
-  // Helper method to get tracking key from question ID
-  // Telegram callback data has size limits, so we might need short IDs
-  // For now assuming question ID fits or we use a mapping if needed
+  recordAnswer(questionId: string, questionIndex: number, answer: string[]): void {
+    const session = this.sessions.get(questionId);
+    if (session) {
+      // Ensure array exists up to this index
+      while (session.answers.length <= questionIndex) {
+        session.answers.push([]);
+      }
+      session.answers[questionIndex] = answer;
+      this.updateQuestionSession(questionId, session);
+    }
+  }
+
+  getCurrentQuestionIndex(questionId: string): number | undefined {
+    return this.sessions.get(questionId)?.currentQuestionIndex;
+  }
 }

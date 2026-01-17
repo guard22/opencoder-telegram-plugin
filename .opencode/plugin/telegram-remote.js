@@ -6,6 +6,176 @@
 // src/bot.ts
 import { Bot, InputFile } from "grammy";
 
+// src/commands/audio-message.command.ts
+import { mkdir, writeFile } from "fs/promises";
+import { tmpdir } from "os";
+import { join } from "path";
+
+// src/lib/audio-transcription.ts
+import { readFile, unlink } from "fs/promises";
+import { createOpenAI } from "@ai-sdk/openai";
+import { createPartFromUri, createUserContent, GoogleGenAI } from "@google/genai";
+import { experimental_transcribe as transcribe } from "ai";
+async function transcribeWithOpenAI(audioFilePath, apiKey, logger) {
+  try {
+    const audioBuffer = await readFile(audioFilePath);
+    const openaiProvider = createOpenAI({ apiKey });
+    const { text } = await transcribe({
+      model: openaiProvider.transcription("whisper-1"),
+      audio: audioBuffer
+    });
+    return { text };
+  } catch (error) {
+    const errorMessage = error instanceof Error ? error.message : String(error);
+    logger.error("OpenAI transcription failed", { error: errorMessage });
+    return { text: "", error: errorMessage };
+  }
+}
+async function transcribeWithGemini(audioFilePath, apiKey, mimeType, logger) {
+  try {
+    const ai = new GoogleGenAI({ apiKey });
+    const uploadedFile = await ai.files.upload({
+      file: audioFilePath,
+      config: { mimeType }
+    });
+    if (!uploadedFile.uri) {
+      throw new Error("Failed to get URI for uploaded file");
+    }
+    const response = await ai.models.generateContent({
+      model: "gemini-1.5-flash",
+      contents: createUserContent([
+        createPartFromUri(uploadedFile.uri || "", uploadedFile.mimeType || "audio/ogg"),
+        "Transcribe this audio file. Return only the transcribed text without any additional formatting, explanations, or markdown."
+      ])
+    });
+    const text = response.text || "";
+    return { text };
+  } catch (error) {
+    const errorMessage = error instanceof Error ? error.message : String(error);
+    logger.error("Gemini transcription failed", { error: errorMessage });
+    return { text: "", error: errorMessage };
+  }
+}
+async function transcribeAudio(audioFilePath, config, mimeType, logger) {
+  logger.info("Starting audio transcription", {
+    provider: config.provider,
+    mimeType
+  });
+  const result = config.provider === "openai" ? await transcribeWithOpenAI(audioFilePath, config.apiKey, logger) : await transcribeWithGemini(audioFilePath, config.apiKey, mimeType, logger);
+  try {
+    await unlink(audioFilePath);
+    logger.debug("Cleaned up audio file", { audioFilePath });
+  } catch (error) {
+    logger.warn("Failed to clean up audio file", { error: String(error) });
+  }
+  return result;
+}
+
+// src/commands/audio-message.command.ts
+var SUPPORTED_FORMATS = [
+  "audio/ogg",
+  "audio/mpeg",
+  "audio/wav",
+  "audio/webm",
+  "audio/m4a",
+  "audio/flac",
+  "audio/opus"
+];
+var MAX_FILE_SIZE = 25 * 1024 * 1024;
+function createAudioMessageHandler({ config, client, logger, sessionStore }) {
+  return async (ctx) => {
+    console.log("[Bot] Audio/voice message received");
+    if (!config.audioTranscriptionApiKey || !config.audioTranscriptionProvider) {
+      await ctx.reply(
+        "\u{1F399}\uFE0F Voice transcription is not configured. Please add AUDIO_TRANSCRIPTION_API_KEY to .env"
+      );
+      return;
+    }
+    if (ctx.chat?.id !== config.groupId) return;
+    const voice = ctx.message?.voice;
+    const audio = ctx.message?.audio;
+    const fileToDownload = voice || audio;
+    if (!fileToDownload) {
+      await ctx.reply("\u274C No audio file found in message");
+      return;
+    }
+    if (fileToDownload.file_size && fileToDownload.file_size > MAX_FILE_SIZE) {
+      await ctx.reply("\u274C Audio file too large (max 25MB)");
+      return;
+    }
+    const mimeType = fileToDownload.mime_type || "audio/ogg";
+    if (!SUPPORTED_FORMATS.includes(mimeType)) {
+      await ctx.reply(`\u274C Unsupported audio format: ${mimeType}`);
+      return;
+    }
+    try {
+      const file = await ctx.getFile();
+      const fileUrl = `https://api.telegram.org/file/bot${config.botToken}/${file.file_path}`;
+      const tempDir = join(tmpdir(), "opencode-audio");
+      await mkdir(tempDir, { recursive: true });
+      const timestamp = Date.now();
+      const extension = mimeType.split("/")[1] || "ogg";
+      const tempFilePath = join(tempDir, `voice_${timestamp}.${extension}`);
+      const response = await fetch(fileUrl);
+      if (!response.ok) {
+        throw new Error(`Failed to download audio file: ${response.statusText}`);
+      }
+      const arrayBuffer = await response.arrayBuffer();
+      await writeFile(tempFilePath, Buffer.from(arrayBuffer));
+      logger.info("Downloaded audio file", { tempFilePath, mimeType });
+      const processingMsg = await ctx.reply("\u{1F399}\uFE0F Transcribing audio...");
+      const result = await transcribeAudio(
+        tempFilePath,
+        {
+          apiKey: config.audioTranscriptionApiKey,
+          provider: config.audioTranscriptionProvider
+        },
+        mimeType,
+        logger
+      );
+      await ctx.api.deleteMessage(config.groupId, processingMsg.message_id);
+      if (result.error || !result.text.trim()) {
+        await ctx.reply(`\u274C Transcription failed: ${result.error || "Empty transcription"}`);
+        return;
+      }
+      logger.info("Transcription successful", { textLength: result.text.length });
+      let sessionId = sessionStore.getActiveSession();
+      if (!sessionId) {
+        const createSessionResponse = await client.session.create({ body: {} });
+        if (createSessionResponse.error) {
+          logger.error("Failed to create session", { error: createSessionResponse.error });
+          await ctx.reply("\u274C Failed to initialize session for voice transcription");
+          return;
+        }
+        sessionId = createSessionResponse.data.id;
+        sessionStore.setActiveSession(sessionId);
+        logger.info("Auto-created session for voice message", { sessionId });
+      }
+      const promptResponse = await client.session.prompt({
+        path: { id: sessionId },
+        body: {
+          parts: [{ type: "text", text: result.text }]
+        }
+      });
+      if (promptResponse.error) {
+        logger.error("Failed to send transcription to OpenCode", {
+          error: promptResponse.error
+        });
+        await ctx.reply("\u274C Failed to send transcription to OpenCode");
+        return;
+      }
+      await ctx.reply(`\u2705 Transcribed and sent:
+\`${result.text}\``, {
+        parse_mode: "Markdown"
+      });
+      logger.debug("Sent transcription to OpenCode", { sessionId });
+    } catch (error) {
+      logger.error("Audio message handling failed", { error: String(error) });
+      await ctx.reply(`\u274C Failed to process audio: ${String(error)}`);
+    }
+  };
+}
+
 // src/commands/agents.ts
 function createAgentsCommandHandler({
   config,
@@ -241,174 +411,126 @@ ${sessionList}`;
   };
 }
 
-// src/commands/audio-message.command.ts
-import { writeFile, mkdir } from "fs/promises";
-import { join } from "path";
-import { tmpdir } from "os";
+// src/commands/question-callback.command.ts
+import { InlineKeyboard } from "grammy";
+var createQuestionCallbackHandler = (deps) => async (ctx) => {
+  if (!ctx.callbackQuery || !ctx.callbackQuery.data) return;
+  const data = ctx.callbackQuery.data;
+  if (!data.startsWith("q:")) return;
+  const parts = data.split(":");
+  if (parts.length !== 4) return;
+  const [_, questionId, questionIndexStr, action] = parts;
+  const questionIndex = parseInt(questionIndexStr, 10);
+  const session = deps.questionTracker.getActiveQuestionSession(questionId);
+  if (!session) {
+    await ctx.answerCallbackQuery({ text: "Question session expired or invalid." });
+    return;
+  }
+  const question = session.questions[questionIndex];
+  if (!question) return;
+  let currentAnswers = session.answers[questionIndex] || [];
+  if (action === "done") {
+    if (currentAnswers.length === 0) {
+      await ctx.answerCallbackQuery({ text: "Please select at least one option." });
+      return;
+    }
+    await proceedToNext(ctx, deps, questionId, questionIndex);
+  } else {
+    const optionIndex = parseInt(action, 10);
+    const option = question.options[optionIndex];
+    if (!option) return;
+    if (question.multiple) {
+      if (currentAnswers.includes(option.label)) {
+        currentAnswers = currentAnswers.filter((a) => a !== option.label);
+      } else {
+        currentAnswers.push(option.label);
+      }
+    } else {
+      currentAnswers = [option.label];
+    }
+    deps.questionTracker.recordAnswer(questionId, questionIndex, currentAnswers);
+    if (!question.multiple) {
+      await ctx.answerCallbackQuery();
+      await proceedToNext(ctx, deps, questionId, questionIndex);
+    } else {
+      const keyboard = new InlineKeyboard();
+      question.options.forEach((opt, idx) => {
+        const isSelected = currentAnswers.includes(opt.label);
+        const icon = isSelected ? "\u2611 " : "\u2610 ";
+        keyboard.text(`${icon}${opt.label}`, `q:${questionId}:${questionIndex}:${idx}`).row();
+      });
+      keyboard.text("Done", `q:${questionId}:${questionIndex}:done`);
+      try {
+        await ctx.editMessageReplyMarkup({ reply_markup: keyboard });
+      } catch (error) {
+      }
+      await ctx.answerCallbackQuery();
+    }
+  }
+};
+async function proceedToNext(ctx, deps, questionId, currentIndex) {
+  const session = deps.questionTracker.getActiveQuestionSession(questionId);
+  if (!session) return;
+  const question = session.questions[currentIndex];
+  const answers = session.answers[currentIndex] || [];
+  try {
+    await ctx.editMessageText(
+      `\u2753 *${question.header}*
 
-// src/lib/audio-transcription.ts
-import { createOpenAI } from "@ai-sdk/openai";
-import { experimental_transcribe as transcribe } from "ai";
-import { GoogleGenAI, createUserContent, createPartFromUri } from "@google/genai";
-import { readFile, unlink } from "fs/promises";
-async function transcribeWithOpenAI(audioFilePath, apiKey, logger) {
-  try {
-    const audioBuffer = await readFile(audioFilePath);
-    const openaiProvider = createOpenAI({ apiKey });
-    const { text } = await transcribe({
-      model: openaiProvider.transcription("whisper-1"),
-      audio: audioBuffer
-    });
-    return { text };
-  } catch (error) {
-    const errorMessage = error instanceof Error ? error.message : String(error);
-    logger.error("OpenAI transcription failed", { error: errorMessage });
-    return { text: "", error: errorMessage };
-  }
-}
-async function transcribeWithGemini(audioFilePath, apiKey, mimeType, logger) {
-  try {
-    const ai = new GoogleGenAI({ apiKey });
-    const uploadedFile = await ai.files.upload({
-      file: audioFilePath,
-      config: { mimeType }
-    });
-    if (!uploadedFile.uri) {
-      throw new Error("Failed to get URI for uploaded file");
-    }
-    const response = await ai.models.generateContent({
-      model: "gemini-1.5-flash",
-      contents: createUserContent([
-        createPartFromUri(uploadedFile.uri || "", uploadedFile.mimeType || "audio/ogg"),
-        "Transcribe this audio file. Return only the transcribed text without any additional formatting, explanations, or markdown."
-      ])
-    });
-    const text = response.text || "";
-    return { text };
-  } catch (error) {
-    const errorMessage = error instanceof Error ? error.message : String(error);
-    logger.error("Gemini transcription failed", { error: errorMessage });
-    return { text: "", error: errorMessage };
-  }
-}
-async function transcribeAudio(audioFilePath, config, mimeType, logger) {
-  logger.info("Starting audio transcription", {
-    provider: config.provider,
-    mimeType
-  });
-  const result = config.provider === "openai" ? await transcribeWithOpenAI(audioFilePath, config.apiKey, logger) : await transcribeWithGemini(audioFilePath, config.apiKey, mimeType, logger);
-  try {
-    await unlink(audioFilePath);
-    logger.debug("Cleaned up audio file", { audioFilePath });
-  } catch (error) {
-    logger.warn("Failed to clean up audio file", { error: String(error) });
-  }
-  return result;
-}
+${question.question}
 
-// src/commands/audio-message.command.ts
-var SUPPORTED_FORMATS = [
-  "audio/ogg",
-  "audio/mpeg",
-  "audio/wav",
-  "audio/webm",
-  "audio/m4a",
-  "audio/flac",
-  "audio/opus"
-];
-var MAX_FILE_SIZE = 25 * 1024 * 1024;
-function createAudioMessageHandler({ config, client, logger, sessionStore }) {
-  return async (ctx) => {
-    console.log("[Bot] Audio/voice message received");
-    if (!config.audioTranscriptionApiKey || !config.audioTranscriptionProvider) {
-      await ctx.reply(
-        "\u{1F399}\uFE0F Voice transcription is not configured. Please add AUDIO_TRANSCRIPTION_API_KEY to .env"
-      );
-      return;
+\u2705 *Answered*: ${answers.join(", ")}`,
+      { parse_mode: "Markdown" }
+    );
+  } catch (e) {
+    console.error("Failed to edit question message:", e);
+  }
+  const nextIndex = currentIndex + 1;
+  if (nextIndex < session.questions.length) {
+    const nextQuestion = session.questions[nextIndex];
+    const isMultiple = nextQuestion.multiple ?? false;
+    const keyboard = new InlineKeyboard();
+    nextQuestion.options.forEach((option, optionIndex) => {
+      const icon = isMultiple ? "\u2610 " : "";
+      keyboard.text(`${icon}${option.label}`, `q:${questionId}:${nextIndex}:${optionIndex}`).row();
+    });
+    if (isMultiple) {
+      keyboard.text("Done", `q:${questionId}:${nextIndex}:done`);
     }
-    if (ctx.chat?.id !== config.groupId) return;
-    const voice = ctx.message?.voice;
-    const audio = ctx.message?.audio;
-    const fileToDownload = voice || audio;
-    if (!fileToDownload) {
-      await ctx.reply("\u274C No audio file found in message");
-      return;
-    }
-    if (fileToDownload.file_size && fileToDownload.file_size > MAX_FILE_SIZE) {
-      await ctx.reply("\u274C Audio file too large (max 25MB)");
-      return;
-    }
-    const mimeType = fileToDownload.mime_type || "audio/ogg";
-    if (!SUPPORTED_FORMATS.includes(mimeType)) {
-      await ctx.reply(`\u274C Unsupported audio format: ${mimeType}`);
-      return;
-    }
+    const messageText = `\u2753 *${nextQuestion.header}*
+
+${nextQuestion.question}
+
+${nextQuestion.options.map((o) => `\u2022 *${o.label}*: ${o.description}`).join("\n")}`;
+    const result = await deps.queue.enqueue(
+      () => ctx.api.sendMessage(deps.config.groupId, messageText, {
+        parse_mode: "Markdown",
+        reply_markup: keyboard
+      })
+    );
+    session.telegramMessageIds.push(result.message_id);
+    session.currentQuestionIndex = nextIndex;
+    deps.questionTracker.updateQuestionSession(questionId, session);
+  } else {
     try {
-      const file = await ctx.getFile();
-      const fileUrl = `https://api.telegram.org/file/bot${config.botToken}/${file.file_path}`;
-      const tempDir = join(tmpdir(), "opencode-audio");
-      await mkdir(tempDir, { recursive: true });
-      const timestamp = Date.now();
-      const extension = mimeType.split("/")[1] || "ogg";
-      const tempFilePath = join(tempDir, `voice_${timestamp}.${extension}`);
-      const response = await fetch(fileUrl);
-      if (!response.ok) {
-        throw new Error(`Failed to download audio file: ${response.statusText}`);
-      }
-      const arrayBuffer = await response.arrayBuffer();
-      await writeFile(tempFilePath, Buffer.from(arrayBuffer));
-      logger.info("Downloaded audio file", { tempFilePath, mimeType });
-      const processingMsg = await ctx.reply("\u{1F399}\uFE0F Transcribing audio...");
-      const result = await transcribeAudio(
-        tempFilePath,
-        {
-          apiKey: config.audioTranscriptionApiKey,
-          provider: config.audioTranscriptionProvider
-        },
-        mimeType,
-        logger
-      );
-      await ctx.api.deleteMessage(config.groupId, processingMsg.message_id);
-      if (result.error || !result.text.trim()) {
-        await ctx.reply(`\u274C Transcription failed: ${result.error || "Empty transcription"}`);
-        return;
-      }
-      logger.info("Transcription successful", { textLength: result.text.length });
-      let sessionId = sessionStore.getActiveSession();
-      if (!sessionId) {
-        const createSessionResponse = await client.session.create({ body: {} });
-        if (createSessionResponse.error) {
-          logger.error("Failed to create session", { error: createSessionResponse.error });
-          await ctx.reply("\u274C Failed to initialize session for voice transcription");
-          return;
-        }
-        sessionId = createSessionResponse.data.id;
-        sessionStore.setActiveSession(sessionId);
-        logger.info("Auto-created session for voice message", { sessionId });
-      }
-      const promptResponse = await client.session.prompt({
-        path: { id: sessionId },
+      await deps.client.tui.control.response({
         body: {
-          parts: [{ type: "text", text: result.text }]
+          type: "question.replied",
+          properties: {
+            sessionID: session.sessionId,
+            requestID: questionId,
+            answers: session.answers
+          }
         }
       });
-      if (promptResponse.error) {
-        logger.error("Failed to send transcription to OpenCode", {
-          error: promptResponse.error
-        });
-        await ctx.reply("\u274C Failed to send transcription to OpenCode");
-        return;
-      }
-      await ctx.reply(`\u2705 Transcribed and sent:
-\`${result.text}\``, {
-        parse_mode: "Markdown"
-      });
-      logger.debug("Sent transcription to OpenCode", { sessionId });
+      await deps.bot.sendTemporaryMessage("\u2705 Answers submitted successfully!", 3e3);
     } catch (error) {
-      logger.error("Audio message handling failed", { error: String(error) });
-      await ctx.reply(`\u274C Failed to process audio: ${String(error)}`);
+      console.error("Failed to submit answers:", error);
+      await deps.bot.sendMessage(`\u274C Failed to submit answers: ${error}`);
+    } finally {
+      deps.questionTracker.clearQuestionSession(questionId);
     }
-  };
+  }
 }
 
 // src/lib/telegram-queue.ts
@@ -547,7 +669,7 @@ function isUserAllowed(ctx, allowedUserIds) {
   if (!userId) return false;
   return allowedUserIds.includes(userId);
 }
-function createTelegramBot(config, client, logger, sessionStore, globalStateStore) {
+function createTelegramBot(config, client, logger, sessionStore, globalStateStore, questionTracker) {
   console.log("[Bot] createTelegramBot called");
   const queue = new TelegramQueue(500);
   if (botInstance) {
@@ -576,7 +698,8 @@ function createTelegramBot(config, client, logger, sessionStore, globalStateStor
     logger,
     sessionStore,
     queue,
-    globalStateStore
+    globalStateStore,
+    questionTracker
   };
   bot.command("new", createNewCommandHandler(commandDeps));
   bot.command("deletesessions", createDeleteSessionsCommandHandler(commandDeps));
@@ -586,6 +709,7 @@ function createTelegramBot(config, client, logger, sessionStore, globalStateStor
   bot.on("message:text", createMessageTextHandler(commandDeps));
   bot.on("message:voice", createAudioMessageHandler(commandDeps));
   bot.on("message:audio", createAudioMessageHandler(commandDeps));
+  bot.on("callback_query:data", createQuestionCallbackHandler(commandDeps));
   bot.catch((error) => {
     console.error("[Bot] Bot error caught:", error);
     logger.error("Bot error", { error: String(error) });
@@ -616,9 +740,9 @@ function createBotManager(bot, config, queue) {
       botInstance = null;
       console.log("[Bot] Bot stopped and instance cleared");
     },
-    async sendMessage(text) {
+    async sendMessage(text, options) {
       console.log(`[Bot] sendMessage: "${text.slice(0, 50)}..."`);
-      const result = await queue.enqueue(() => bot.api.sendMessage(config.groupId, text));
+      const result = await queue.enqueue(() => bot.api.sendMessage(config.groupId, text, options));
       return { message_id: result.message_id };
     },
     async editMessage(messageId, text) {
@@ -723,6 +847,16 @@ function createLogger(client) {
   };
 }
 
+// src/events/message-part-updated.ts
+async function handleMessagePartUpdated(event, context) {
+  const logger = createLogger(context.client);
+  const part = event.properties.part;
+  if (part.type === "text") {
+    const text = part.text;
+    context.globalStateStore.setLastMessagePartUpdate(text);
+  }
+}
+
 // src/events/message-updated.ts
 async function handleMessageUpdated(event, context) {
   const logger = createLogger(context.client);
@@ -774,12 +908,54 @@ async function handleMessageUpdated(event, context) {
   }
 }
 
+// src/events/question-asked.ts
+import { InlineKeyboard as InlineKeyboard2 } from "grammy";
+async function handleQuestionAsked(event, context) {
+  const { id: questionId, sessionID, questions } = event.properties;
+  console.log(`[TelegramRemote] Question asked: ${questionId} (${questions.length} questions)`);
+  context.questionTracker.createQuestionSession(questionId, sessionID, questions);
+  await sendQuestion(context, questionId, 0);
+}
+async function sendQuestion(context, questionId, index) {
+  const session = context.questionTracker.getActiveQuestionSession(questionId);
+  if (!session || index >= session.questions.length) {
+    return;
+  }
+  const question = session.questions[index];
+  const isMultiple = question.multiple ?? false;
+  const currentAnswers = session.answers[index] || [];
+  const keyboard = new InlineKeyboard2();
+  question.options.forEach((option, optionIndex) => {
+    const isSelected = currentAnswers.includes(option.label);
+    const icon = isMultiple ? isSelected ? "\u2611 " : "\u2610 " : "";
+    keyboard.text(`${icon}${option.label}`, `q:${questionId}:${index}:${optionIndex}`).row();
+  });
+  if (isMultiple) {
+    keyboard.text("Done", `q:${questionId}:${index}:done`);
+  }
+  const messageText = `\u2753 *${question.header}*
+
+${question.question}
+
+${question.options.map((o) => `\u2022 *${o.label}*: ${o.description}`).join("\n")}`;
+  const result = await context.bot.sendMessage(messageText, {
+    parse_mode: "Markdown",
+    reply_markup: keyboard
+  });
+  if (session) {
+    session.telegramMessageIds.push(result.message_id);
+    context.questionTracker.updateQuestionSession(questionId, session);
+  }
+}
+
 // src/events/session-created.ts
 async function handleSessionCreated(event, context) {
   const sessionId = event.properties.info.id;
   console.log(`[TelegramRemote] Session created: ${sessionId.slice(0, 8)}`);
-  const message = await context.bot.sendMessage(`\u2705 Session initialized: ${sessionId.slice(0, 8)}`);
-  context.sessionStore.setSessionInitializedMessageId(message.message_id);
+  await context.bot.sendTemporaryMessage(
+    `\u2705 Session initialized: ${sessionId.slice(0, 8)}`,
+    1e4
+  );
 }
 
 // src/events/session-status.ts
@@ -808,6 +984,7 @@ var GlobalStateStore = class {
   currentAgent = null;
   currentSessionTitle = null;
   sessionStatus = null;
+  lastMessagePartUpdate = null;
   constructor(allowedEventTypes) {
     this.allowedEventTypes = new Set(allowedEventTypes);
   }
@@ -858,6 +1035,12 @@ var GlobalStateStore = class {
   }
   getSessionStatus() {
     return this.sessionStatus;
+  }
+  setLastMessagePartUpdate(text) {
+    this.lastMessagePartUpdate = text;
+  }
+  getLastMessagePartUpdate() {
+    return this.lastMessagePartUpdate;
   }
 };
 
@@ -935,6 +1118,45 @@ var MessageTracker = class {
   }
 };
 
+// src/question-tracker.ts
+var QuestionTracker = class {
+  sessions = /* @__PURE__ */ new Map();
+  createQuestionSession(questionId, sessionId, questions) {
+    const sessionState = {
+      questionId,
+      sessionId,
+      questions,
+      currentQuestionIndex: 0,
+      answers: [],
+      telegramMessageIds: [],
+      createdAt: /* @__PURE__ */ new Date()
+    };
+    this.sessions.set(questionId, sessionState);
+  }
+  getActiveQuestionSession(questionId) {
+    return this.sessions.get(questionId);
+  }
+  updateQuestionSession(questionId, state) {
+    this.sessions.set(questionId, state);
+  }
+  clearQuestionSession(questionId) {
+    this.sessions.delete(questionId);
+  }
+  recordAnswer(questionId, questionIndex, answer) {
+    const session = this.sessions.get(questionId);
+    if (session) {
+      while (session.answers.length <= questionIndex) {
+        session.answers.push([]);
+      }
+      session.answers[questionIndex] = answer;
+      this.updateQuestionSession(questionId, session);
+    }
+  }
+  getCurrentQuestionIndex(questionId) {
+    return this.sessions.get(questionId)?.currentQuestionIndex;
+  }
+};
+
 // src/session-store.ts
 var SessionStore = class {
   activeSessionId = null;
@@ -986,10 +1208,11 @@ var TelegramRemote = async ({ client }) => {
     };
   }
   console.log(
-    "[TelegramRemote] Creating session store, message tracker, and global state store..."
+    "[TelegramRemote] Creating session store, message tracker, global state store and question tracker..."
   );
   const sessionStore = new SessionStore();
   const messageTracker = new MessageTracker();
+  const questionTracker = new QuestionTracker();
   const globalStateStore = new GlobalStateStore([
     "file.edited",
     "session.updated",
@@ -998,7 +1221,14 @@ var TelegramRemote = async ({ client }) => {
     "message.updated"
   ]);
   console.log("[TelegramRemote] Creating Telegram bot...");
-  const bot = createTelegramBot(config, client, logger, sessionStore, globalStateStore);
+  const bot = createTelegramBot(
+    config,
+    client,
+    logger,
+    sessionStore,
+    globalStateStore,
+    questionTracker
+  );
   console.log("[TelegramRemote] Bot created successfully");
   console.log("[TelegramRemote] Starting Telegram bot polling...");
   bot.start().catch((error) => {
@@ -1044,13 +1274,16 @@ var TelegramRemote = async ({ client }) => {
     bot,
     sessionStore,
     messageTracker,
-    globalStateStore
+    globalStateStore,
+    questionTracker
   };
   const eventHandlers = {
     "session.created": handleSessionCreated,
     "message.updated": handleMessageUpdated,
+    "message.part.updated": handleMessagePartUpdated,
     "session.updated": handleSessionUpdated,
-    "session.status": handleSessionStatus
+    "session.status": handleSessionStatus,
+    "question.asked": handleQuestionAsked
   };
   return {
     event: async ({ event }) => {

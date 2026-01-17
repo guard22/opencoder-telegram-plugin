@@ -3,7 +3,9 @@ import { createTelegramBot } from "./bot.js";
 import { type Config, loadConfig } from "./config.js";
 import {
   type EventHandlerContext,
+  handleMessagePartUpdated,
   handleMessageUpdated,
+  handleQuestionAsked,
   handleSessionCreated,
   handleSessionStatus,
   handleSessionUpdated,
@@ -12,6 +14,7 @@ import { GlobalStateStore } from "./global-state-store.js";
 import { createLogger } from "./lib/logger.js";
 import { writeEventToDebugFile } from "./lib/utils.js";
 import { MessageTracker } from "./message-tracker.js";
+import { QuestionTracker } from "./question-tracker.js";
 import { SessionStore } from "./session-store.js";
 
 export const TelegramRemote: Plugin = async ({ client }) => {
@@ -27,15 +30,16 @@ export const TelegramRemote: Plugin = async ({ client }) => {
     console.error("[TelegramRemote] Configuration error:", error);
     logger.error(`Configuration error: ${error}`);
     return {
-      event: async () => { },
+      event: async () => {},
     };
   }
 
   console.log(
-    "[TelegramRemote] Creating session store, message tracker, and global state store...",
+    "[TelegramRemote] Creating session store, message tracker, global state store and question tracker...",
   );
   const sessionStore = new SessionStore();
   const messageTracker = new MessageTracker();
+  const questionTracker = new QuestionTracker();
   const globalStateStore = new GlobalStateStore([
     "file.edited",
     "session.updated",
@@ -45,7 +49,18 @@ export const TelegramRemote: Plugin = async ({ client }) => {
   ]);
 
   console.log("[TelegramRemote] Creating Telegram bot...");
-  const bot = createTelegramBot(config, client, logger, sessionStore, globalStateStore);
+  // Pass questionTracker to createTelegramBot if needed, or better, pass it via commandDeps later inside createTelegramBot
+  // But wait, createTelegramBot returns the bot manager which is used in eventContext.
+  // The command handlers inside createTelegramBot need questionTracker too.
+  // So we should update createTelegramBot signature.
+  const bot = createTelegramBot(
+    config,
+    client,
+    logger,
+    sessionStore,
+    globalStateStore,
+    questionTracker,
+  );
   console.log("[TelegramRemote] Bot created successfully");
 
   console.log("[TelegramRemote] Starting Telegram bot polling...");
@@ -99,14 +114,17 @@ export const TelegramRemote: Plugin = async ({ client }) => {
     sessionStore,
     messageTracker,
     globalStateStore,
+    questionTracker,
   };
 
   // Event type to handler mapping
   const eventHandlers = {
     "session.created": handleSessionCreated,
     "message.updated": handleMessageUpdated,
+    "message.part.updated": handleMessagePartUpdated,
     "session.updated": handleSessionUpdated,
     "session.status": handleSessionStatus,
+    "question.asked": handleQuestionAsked,
   } as const;
 
   return {
@@ -121,6 +139,7 @@ export const TelegramRemote: Plugin = async ({ client }) => {
 
       const handler = eventHandlers[event.type as keyof typeof eventHandlers];
       if (handler) {
+        // @ts-expect-error
         await handler(event, eventContext);
       }
     },
