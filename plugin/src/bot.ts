@@ -19,7 +19,6 @@ import { TelegramQueue } from "./lib/telegram-queue.js";
 import type { OpencodeClient } from "./lib/types.js";
 import { sendTemporaryMessage } from "./lib/utils.js";
 import type { QuestionTracker } from "./question-tracker.js";
-import type { SessionStore } from "./session-store.js";
 
 export interface TelegramBotManager {
   start(): Promise<void>;
@@ -43,7 +42,6 @@ export function createTelegramBot(
   config: Config,
   client: OpencodeClient,
   logger: Logger,
-  sessionStore: SessionStore,
   globalStateStore: GlobalStateStore,
   questionTracker: QuestionTracker,
 ): TelegramBotManager {
@@ -82,9 +80,8 @@ export function createTelegramBot(
     config,
     client,
     logger,
-    sessionStore,
-    queue,
     globalStateStore,
+    queue,
     questionTracker,
   };
 

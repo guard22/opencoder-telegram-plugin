@@ -21,44 +21,23 @@ export async function handleMessageUpdated(
     }
   }
 
-  if (message.role === "user") {
-    context.messageTracker.markAsUser(message.id);
-  } else if (message.role === "assistant") {
-    context.messageTracker.markAsAssistant(message.id);
+  if (message.role === "assistant" && message.time?.completed) {
+    // Check if we have content to store/send
+    if (message.content) {
+      // Store last response in global state
+      context.globalStateStore.setLastResponse(message.content);
 
-    // Link the prompt message ID to this assistant message
-    const promptMessageId = context.sessionStore.getPromptMessageId();
-    if (promptMessageId) {
-      context.messageTracker.setStatusMessageId(message.id, promptMessageId);
-      context.messageTracker.setProcessingPrompt(message.id, true);
-      context.sessionStore.clearPromptMessageId(); // Clear it so it's not reused
-      console.log(
-        `[TelegramRemote] Linked prompt message ${promptMessageId} to assistant message ${message.id}`,
-      );
-    }
-
-    // Check if message is completed
-    if (message.time?.completed) {
-      // Stop processing and clean up interval
-      context.messageTracker.setProcessingPrompt(message.id, false);
-      context.messageTracker.clearUpdateInterval(message.id);
-
-      const content = context.messageTracker.getContent(message.id);
-      if (content) {
-        const lines = content.split("\n");
-        if (lines.length > 100) {
-          console.log(
-            `[TelegramRemote] Message ${message.id} completed with ${lines.length} lines. Sending as Markdown file.`,
-          );
-          try {
-            await context.bot.sendDocument(content, "response.md");
-          } catch (error) {
-            console.error("[TelegramRemote] Failed to send document:", error);
-            logger.error("Failed to send document", { error: String(error) });
-          }
+      const lines = message.content.split("\n");
+      if (lines.length > 100) {
+        console.log(
+          `[TelegramRemote] Message ${message.id} completed with ${lines.length} lines. Sending as Markdown file.`,
+        );
+        try {
+          await context.bot.sendDocument(message.content, "response.md");
+        } catch (error) {
+          console.error("[TelegramRemote] Failed to send document:", error);
+          logger.error("Failed to send document", { error: String(error) });
         }
-        // Clean up all tracking for this message
-        context.messageTracker.clearAllTracking(message.id);
       }
     }
   }

@@ -7,7 +7,7 @@ export function createNewCommandHandler({
   config,
   client,
   logger,
-  sessionStore,
+  globalStateStore,
 }: CommandDeps) {
   return async (ctx: Context) => {
     console.log("[Bot] /new command received");
@@ -22,7 +22,7 @@ export function createNewCommandHandler({
       }
 
       const sessionId = createSessionResponse.data.id;
-      sessionStore.setActiveSession(sessionId);
+      globalStateStore.setActiveSession(sessionId);
 
       logger.info("Created new session", {
         sessionId,

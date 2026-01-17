@@ -7,8 +7,7 @@ export async function handleSessionCreated(
   const sessionId = event.properties.info.id;
   console.log(`[TelegramRemote] Session created: ${sessionId.slice(0, 8)}`);
 
-  await context.bot.sendTemporaryMessage(
-    `✅ Session initialized: ${sessionId.slice(0, 8)}`,
-    10000,
-  );
+  context.globalStateStore.setActiveSession(sessionId);
+
+  await context.bot.sendTemporaryMessage(`✅ Session initialized: ${sessionId.slice(0, 8)}`, 10000);
 }

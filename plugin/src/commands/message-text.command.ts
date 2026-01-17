@@ -2,13 +2,18 @@ import type { Context } from "grammy";
 import { getDefaultKeyboardOptions } from "../lib/utils.js";
 import type { CommandDeps } from "./types.js";
 
-export function createMessageTextHandler({ config, client, logger, sessionStore }: CommandDeps) {
+export function createMessageTextHandler({
+  config,
+  client,
+  logger,
+  globalStateStore,
+}: CommandDeps) {
   return async (ctx: Context) => {
     console.log(`[Bot] Text message received: "${ctx.message?.text?.slice(0, 50)}..."`);
     if (ctx.chat?.id !== config.groupId) return;
     if (ctx.message?.text?.startsWith("/")) return;
 
-    let sessionId = sessionStore.getActiveSession();
+    let sessionId = globalStateStore.getActiveSession();
 
     if (!sessionId) {
       try {
@@ -20,7 +25,7 @@ export function createMessageTextHandler({ config, client, logger, sessionStore 
         }
 
         sessionId = createSessionResponse.data.id;
-        sessionStore.setActiveSession(sessionId);
+        globalStateStore.setActiveSession(sessionId);
 
         logger.info("Auto-created session", {
           sessionId,

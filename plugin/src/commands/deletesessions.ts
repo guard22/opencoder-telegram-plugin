@@ -5,7 +5,7 @@ export function createDeleteSessionsCommandHandler({
   config,
   client,
   logger,
-  sessionStore,
+  globalStateStore,
 }: CommandDeps) {
   return async (ctx: Context) => {
     console.log("[Bot] /deletesessions command received");
@@ -56,7 +56,7 @@ export function createDeleteSessionsCommandHandler({
     }
 
     // Clear active session
-    sessionStore.clearActiveSession();
+    globalStateStore.clearActiveSession();
 
     await ctx.reply(`Deleted ${deletedSessions} sessions (${failedSessions} failed).`);
   };

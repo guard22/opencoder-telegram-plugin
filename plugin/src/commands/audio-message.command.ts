@@ -17,7 +17,12 @@ const SUPPORTED_FORMATS = [
 
 const MAX_FILE_SIZE = 25 * 1024 * 1024; // 25MB
 
-export function createAudioMessageHandler({ config, client, logger, sessionStore }: CommandDeps) {
+export function createAudioMessageHandler({
+  config,
+  client,
+  logger,
+  globalStateStore,
+}: CommandDeps) {
   return async (ctx: Context) => {
     console.log("[Bot] Audio/voice message received");
 
@@ -103,7 +108,7 @@ export function createAudioMessageHandler({ config, client, logger, sessionStore
       logger.info("Transcription successful", { textLength: result.text.length });
 
       // Prompt Mode: Send directly to OpenCode session
-      let sessionId = sessionStore.getActiveSession();
+      let sessionId = globalStateStore.getActiveSession();
 
       if (!sessionId) {
         // Auto-create session
@@ -115,7 +120,7 @@ export function createAudioMessageHandler({ config, client, logger, sessionStore
         }
 
         sessionId = createSessionResponse.data.id;
-        sessionStore.setActiveSession(sessionId);
+        globalStateStore.setActiveSession(sessionId);
         logger.info("Auto-created session for voice message", { sessionId });
       }
 

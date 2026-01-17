@@ -68,16 +68,17 @@ import { loadConfig } from "./config.js";  // Include .js extension (ESM)
 
 ## Naming Conventions
 
-- **Files**: kebab-case (`session-store.ts`, `message-tracker.ts`)
+- **Files**: kebab-case (`session-store.ts`, `question-tracker.ts`)
 - **Variables/Functions**: camelCase (`loadConfig`, `createLogger`)
-- **Classes/Interfaces**: PascalCase (`SessionStore`, `MessageTracker`)
+- **Classes/Interfaces**: PascalCase (`SessionStore`, `QuestionTracker`)
 - **Constants**: UPPER_SNAKE_CASE (`SERVICE_NAME`)
 - **No "I" prefix**: Use `Config` not `IConfig`
 
 ## Code Patterns
 
-- **Classes**: Use for stateful components (e.g., `SessionStore`, `MessageTracker`)
+- **Classes**: Use for stateful components (e.g., `SessionStore`, `QuestionTracker`)
 - **Factory Functions**: Use for creating instances with dependencies (e.g., `createLogger`)
+
 - **Async/Await**: Always use instead of raw promises
 - **Utility Functions**: Always check existing utility functions in `lib/` before creating new ones
 
@@ -104,9 +105,10 @@ plugin/
 │   ├── bot.ts                # Grammy bot setup and handlers
 │   ├── config.ts             # Environment config loader
 │   ├── session-store.ts      # Active session tracking
-│   ├── message-tracker.ts    # Message role tracking
+│   ├── global-state-store.ts # Global state tracking
 │   └── lib/
 │       ├── config.ts         # Service constants
+
 │       ├── logger.ts         # OpenCode logging wrapper
 │       ├── types.ts          # TypeScript type definitions
 │       └── utils.ts          # Utility functions (e.g., sendTemporaryMessage)

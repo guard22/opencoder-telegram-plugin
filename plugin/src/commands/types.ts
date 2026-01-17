@@ -4,14 +4,12 @@ import type { GlobalStateStore } from "../global-state-store.js";
 import type { Logger } from "../lib/logger.js";
 import type { TelegramQueue } from "../lib/telegram-queue.js";
 import type { OpencodeClient } from "../lib/types.js";
-import type { SessionStore } from "../session-store.js";
 
 export interface CommandDeps {
   bot: TelegramBotManager;
   config: Config;
   client: OpencodeClient;
   logger: Logger;
-  sessionStore: SessionStore;
-  queue: TelegramQueue;
   globalStateStore: GlobalStateStore;
+  queue: TelegramQueue;
 }
