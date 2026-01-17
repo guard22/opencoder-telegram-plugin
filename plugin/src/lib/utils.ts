@@ -6,12 +6,16 @@ import type { TelegramQueue } from "./telegram-queue.js";
 /**
  * Writes an event to a JSON file in the /debug folder for debugging purposes
  * @param event - The event object to write
+ * @param overwrite - If true, overwrites existing file. If false, prepends Unix epoch to filename (default: false)
  */
-export function writeEventToDebugFile(event: { type: string; [key: string]: unknown }): void {
+export function writeEventToDebugFile(
+  event: { type: string; [key: string]: unknown },
+  overwrite: boolean = false,
+): void {
   try {
     const debugDir = join(process.cwd(), "debug");
     mkdirSync(debugDir, { recursive: true });
-    const filename = `${event.type}.json`;
+    const filename = overwrite ? `${event.type}.json` : `${Date.now()}.${event.type}.json`;
     const filepath = join(debugDir, filename);
     writeFileSync(filepath, JSON.stringify(event, null, 2), { flag: "w" });
   } catch (error) {

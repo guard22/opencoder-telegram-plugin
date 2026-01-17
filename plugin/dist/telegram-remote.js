@@ -6,6 +6,55 @@
 // src/bot.ts
 import { Bot, InputFile } from "grammy";
 
+// src/commands/agents.ts
+function createAgentsCommandHandler({
+  config,
+  client,
+  logger,
+  bot,
+  globalStateStore
+}) {
+  return async (ctx) => {
+    console.log("[Bot] /agents command received");
+    if (ctx.chat?.id !== config.groupId) return;
+    try {
+      const agentsResponse = await client.app.agents();
+      if (agentsResponse.error) {
+        logger.error("Failed to list agents", { error: agentsResponse.error });
+        await bot.sendTemporaryMessage("\u274C Failed to list agents");
+        return;
+      }
+      const configResponse = await client.config.get();
+      let defaultAgent = "";
+      if (configResponse.data) {
+        const cfg = configResponse.data;
+        defaultAgent = cfg.default_agent || "";
+      }
+      const agents = agentsResponse.data || [];
+      const primaryAgents = agents.filter((a) => a.mode === "primary");
+      globalStateStore.setAgents(primaryAgents);
+      if (defaultAgent) {
+        globalStateStore.setCurrentAgent(defaultAgent);
+      }
+      if (primaryAgents.length === 0) {
+        await bot.sendTemporaryMessage("No primary agents found.");
+        return;
+      }
+      const agentList = primaryAgents.map((a) => {
+        const isSelected = a.name === defaultAgent ? " (Default)" : "";
+        return `- *${a.name}*${isSelected}: ${a.description || "No description"}`;
+      }).join("\n");
+      const message = `*Available Primary Agents:*
+
+${agentList}`;
+      await bot.sendTemporaryMessage(message, 3e4);
+    } catch (error) {
+      logger.error("Failed to list agents", { error: String(error) });
+      await bot.sendTemporaryMessage("\u274C Failed to list agents");
+    }
+  };
+}
+
 // src/commands/deletesessions.ts
 function createDeleteSessionsCommandHandler({
   config,
@@ -160,6 +209,35 @@ function createNewCommandHandler({
   };
 }
 
+// src/commands/sessions.ts
+function createSessionsCommandHandler({ config, client, logger, bot }) {
+  return async (ctx) => {
+    console.log("[Bot] /sessions command received");
+    if (ctx.chat?.id !== config.groupId) return;
+    try {
+      const sessionsResponse = await client.session.list();
+      if (sessionsResponse.error) {
+        logger.error("Failed to list sessions", { error: sessionsResponse.error });
+        await bot.sendTemporaryMessage("\u274C Failed to list sessions");
+        return;
+      }
+      const sessions = sessionsResponse.data || [];
+      if (sessions.length === 0) {
+        await bot.sendTemporaryMessage("No active sessions found.");
+        return;
+      }
+      const sessionList = sessions.map((s) => `- \`${s.id}\``).join("\n");
+      const message = `Found ${sessions.length} active sessions:
+
+${sessionList}`;
+      await bot.sendTemporaryMessage(message, 3e4);
+    } catch (error) {
+      logger.error("Failed to list sessions", { error: String(error) });
+      await bot.sendTemporaryMessage("\u274C Failed to list sessions");
+    }
+  };
+}
+
 // src/lib/telegram-queue.ts
 var TelegramQueue = class {
   queue = [];
@@ -253,11 +331,11 @@ var TelegramQueue = class {
 // src/lib/utils.ts
 import { mkdirSync, writeFileSync } from "fs";
 import { join } from "path";
-function writeEventToDebugFile(event) {
+function writeEventToDebugFile(event, overwrite = false) {
   try {
     const debugDir = join(process.cwd(), "debug");
     mkdirSync(debugDir, { recursive: true });
-    const filename = `${event.type}.json`;
+    const filename = overwrite ? `${event.type}.json` : `${Date.now()}.${event.type}.json`;
     const filepath = join(debugDir, filename);
     writeFileSync(filepath, JSON.stringify(event, null, 2), { flag: "w" });
   } catch (error) {
@@ -293,7 +371,7 @@ function isUserAllowed(ctx, allowedUserIds) {
   if (!userId) return false;
   return allowedUserIds.includes(userId);
 }
-function createTelegramBot(config, client, logger, sessionStore) {
+function createTelegramBot(config, client, logger, sessionStore, globalStateStore) {
   console.log("[Bot] createTelegramBot called");
   const queue = new TelegramQueue(500);
   if (botInstance) {
@@ -321,10 +399,13 @@ function createTelegramBot(config, client, logger, sessionStore) {
     client,
     logger,
     sessionStore,
-    queue
+    queue,
+    globalStateStore
   };
   bot.command("new", createNewCommandHandler(commandDeps));
   bot.command("deletesessions", createDeleteSessionsCommandHandler(commandDeps));
+  bot.command("sessions", createSessionsCommandHandler(commandDeps));
+  bot.command("agents", createAgentsCommandHandler(commandDeps));
   bot.command("help", createHelpCommandHandler(commandDeps));
   bot.on("message:text", createMessageTextHandler(commandDeps));
   bot.catch((error) => {
@@ -359,7 +440,8 @@ function createBotManager(bot, config, queue) {
     },
     async sendMessage(text) {
       console.log(`[Bot] sendMessage: "${text.slice(0, 50)}..."`);
-      await queue.enqueue(() => bot.api.sendMessage(config.groupId, text));
+      const result = await queue.enqueue(() => bot.api.sendMessage(config.groupId, text));
+      return { message_id: result.message_id };
     },
     async editMessage(messageId, text) {
       console.log(`[Bot] editMessage ${messageId}: "${text.slice(0, 50)}..."`);
@@ -508,8 +590,88 @@ async function handleMessageUpdated(event, context) {
 async function handleSessionCreated(event, context) {
   const sessionId = event.properties.info.id;
   console.log(`[TelegramRemote] Session created: ${sessionId.slice(0, 8)}`);
-  await context.bot.sendMessage(`\u2705 Session initialized: ${sessionId.slice(0, 8)}`);
+  const message = await context.bot.sendMessage(`\u2705 Session initialized: ${sessionId.slice(0, 8)}`);
+  context.sessionStore.setSessionInitializedMessageId(message.message_id);
 }
+
+// src/events/session-status.ts
+async function handleSessionStatus(event, context) {
+  const statusType = event?.properties?.status?.type;
+  if (statusType && context.globalStateStore) {
+    context.globalStateStore.setSessionStatus(statusType);
+    console.log(`[TelegramRemote] Session status updated: ${statusType}`);
+  }
+}
+
+// src/events/session-updated.ts
+async function handleSessionUpdated(event, context) {
+  const title = event?.properties?.info?.title;
+  if (title && context.globalStateStore) {
+    context.globalStateStore.setCurrentSessionTitle(title);
+    console.log(`[TelegramRemote] Session title updated: ${title}`);
+  }
+}
+
+// src/global-state-store.ts
+var GlobalStateStore = class {
+  events = [];
+  allowedEventTypes;
+  availableAgents = [];
+  currentAgent = null;
+  currentSessionTitle = null;
+  sessionStatus = null;
+  constructor(allowedEventTypes) {
+    this.allowedEventTypes = new Set(allowedEventTypes);
+  }
+  addEvent(type, data) {
+    if (this.allowedEventTypes.has(type)) {
+      this.events.push({
+        type,
+        data,
+        timestamp: Date.now()
+      });
+    }
+  }
+  getEvents(type) {
+    if (type) {
+      return this.events.filter((e) => e.type === type);
+    }
+    return [...this.events];
+  }
+  clearEvents(type) {
+    const initialCount = this.events.length;
+    if (type) {
+      this.events = this.events.filter((e) => e.type !== type);
+    } else {
+      this.events = [];
+    }
+    return initialCount - this.events.length;
+  }
+  setAgents(agents) {
+    this.availableAgents = agents;
+  }
+  getAgents() {
+    return this.availableAgents;
+  }
+  setCurrentAgent(agent) {
+    this.currentAgent = agent;
+  }
+  getCurrentAgent() {
+    return this.currentAgent;
+  }
+  setCurrentSessionTitle(title) {
+    this.currentSessionTitle = title;
+  }
+  getCurrentSessionTitle() {
+    return this.currentSessionTitle;
+  }
+  setSessionStatus(status) {
+    this.sessionStatus = status;
+  }
+  getSessionStatus() {
+    return this.sessionStatus;
+  }
+};
 
 // src/message-tracker.ts
 var MessageTracker = class {
@@ -590,6 +752,8 @@ var SessionStore = class {
   activeSessionId = null;
   promptMessageId = void 0;
   // Telegram message ID for active prompt
+  sessionInitializedMessageId = void 0;
+  // Telegram message ID for "Session initialized"
   setActiveSession(sessionId) {
     this.activeSessionId = sessionId;
   }
@@ -607,6 +771,12 @@ var SessionStore = class {
   }
   clearPromptMessageId() {
     this.promptMessageId = void 0;
+  }
+  setSessionInitializedMessageId(messageId) {
+    this.sessionInitializedMessageId = messageId;
+  }
+  getSessionInitializedMessageId() {
+    return this.sessionInitializedMessageId;
   }
 };
 
@@ -627,11 +797,20 @@ var TelegramRemote = async ({ client }) => {
       }
     };
   }
-  console.log("[TelegramRemote] Creating session store and message tracker...");
+  console.log(
+    "[TelegramRemote] Creating session store, message tracker, and global state store..."
+  );
   const sessionStore = new SessionStore();
   const messageTracker = new MessageTracker();
+  const globalStateStore = new GlobalStateStore([
+    "file.edited",
+    "session.updated",
+    "session.status",
+    "message.part.updated",
+    "message.updated"
+  ]);
   console.log("[TelegramRemote] Creating Telegram bot...");
-  const bot = createTelegramBot(config, client, logger, sessionStore);
+  const bot = createTelegramBot(config, client, logger, sessionStore, globalStateStore);
   console.log("[TelegramRemote] Bot created successfully");
   console.log("[TelegramRemote] Starting Telegram bot polling...");
   bot.start().catch((error) => {
@@ -676,16 +855,20 @@ var TelegramRemote = async ({ client }) => {
     client,
     bot,
     sessionStore,
-    messageTracker
+    messageTracker,
+    globalStateStore
   };
   const eventHandlers = {
     "session.created": handleSessionCreated,
-    "message.updated": handleMessageUpdated
+    "message.updated": handleMessageUpdated,
+    "session.updated": handleSessionUpdated,
+    "session.status": handleSessionStatus
   };
   return {
     event: async ({ event }) => {
       console.log(`[TelegramRemote] Event received: ${event.type}`);
-      writeEventToDebugFile(event);
+      writeEventToDebugFile(event, false);
+      globalStateStore.addEvent(event.type, event);
       const handler = eventHandlers[event.type];
       if (handler) {
         await handler(event, eventContext);

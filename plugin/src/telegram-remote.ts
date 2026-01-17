@@ -5,6 +5,7 @@ import {
   type EventHandlerContext,
   handleMessageUpdated,
   handleSessionCreated,
+  handleSessionStatus,
   handleSessionUpdated,
 } from "./events/index.js";
 import { GlobalStateStore } from "./global-state-store.js";
@@ -38,6 +39,7 @@ export const TelegramRemote: Plugin = async ({ client }) => {
   const globalStateStore = new GlobalStateStore([
     "file.edited",
     "session.updated",
+    "session.status",
     "message.part.updated",
     "message.updated",
   ]);
@@ -104,6 +106,7 @@ export const TelegramRemote: Plugin = async ({ client }) => {
     "session.created": handleSessionCreated,
     "message.updated": handleMessageUpdated,
     "session.updated": handleSessionUpdated,
+    "session.status": handleSessionStatus,
   } as const;
 
   return {
