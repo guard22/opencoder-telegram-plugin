@@ -1,0 +1,11 @@
+# Todos
+- Add /models to select model
+- Use selected agent
+- Use selected model
+- Use selected session
+- Store session titles per session ID
+- Research why the question callback at the end does not trigger further work?
+- Make the question callback disappear if the questions.reply event is triggered for those questions
+- Store activeQuestion ID in global state store
+- Split the global state store in separate feature specific stores
+- Put the callback handlers in separate folder
