@@ -6,6 +6,7 @@ export function createDeleteSessionsCommandHandler({
   client,
   logger,
   globalStateStore,
+  sessionStore,
 }: CommandDeps) {
   return async (ctx: Context) => {
     console.log("[Bot] /deletesessions command received");
@@ -40,6 +41,8 @@ export function createDeleteSessionsCommandHandler({
             continue;
           }
 
+          // Remove title from store
+          sessionStore.removeTitle(session.id);
           deletedSessions += 1;
         } catch (error) {
           failedSessions += 1;

@@ -263,7 +263,8 @@ function createDeleteSessionsCommandHandler({
   config,
   client,
   logger,
-  globalStateStore
+  globalStateStore,
+  sessionStore
 }) {
   return async (ctx) => {
     console.log("[Bot] /deletesessions command received");
@@ -291,6 +292,7 @@ function createDeleteSessionsCommandHandler({
             });
             continue;
           }
+          sessionStore.removeTitle(session.id);
           deletedSessions += 1;
         } catch (error) {
           failedSessions += 1;
