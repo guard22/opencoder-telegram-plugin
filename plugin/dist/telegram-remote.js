@@ -6,6 +6,31 @@
 // src/bot.ts
 import { Bot, InputFile } from "grammy";
 
+// src/commands/agents-callback.command.ts
+var createAgentsCallbackHandler = (deps) => async (ctx) => {
+  if (!ctx.callbackQuery || !ctx.callbackQuery.data) return;
+  const data = ctx.callbackQuery.data;
+  if (!data.startsWith("agent:")) return;
+  const agentName = data.replace("agent:", "");
+  if (!agentName) return;
+  if (ctx.chat?.id !== deps.config.groupId) return;
+  const availableAgents = deps.globalStateStore.getAgents();
+  const selectedAgent = availableAgents.find((agent) => agent.name === agentName);
+  if (!selectedAgent) {
+    await ctx.answerCallbackQuery({ text: "Agent not found or unavailable." });
+    return;
+  }
+  deps.globalStateStore.setCurrentAgent(selectedAgent.name);
+  await ctx.answerCallbackQuery({ text: `Active agent set to ${selectedAgent.name}` });
+  try {
+    await ctx.editMessageText(`\u2705 Active agent set to *${selectedAgent.name}*`, {
+      parse_mode: "Markdown"
+    });
+  } catch (error) {
+    await deps.bot.sendTemporaryMessage(`\u2705 Active agent set to ${selectedAgent.name}`, 3e3);
+  }
+};
+
 // src/commands/audio-message.command.ts
 import { mkdir, writeFile } from "fs/promises";
 import { tmpdir } from "os";
@@ -182,6 +207,7 @@ function createAudioMessageHandler({
 }
 
 // src/commands/agents.ts
+import { InlineKeyboard } from "grammy";
 function createAgentsCommandHandler({
   config,
   client,
@@ -206,23 +232,25 @@ function createAgentsCommandHandler({
         defaultAgent = cfg.default_agent || "";
       }
       const agents = agentsResponse.data || [];
-      const primaryAgents = agents.filter((a) => a.mode === "primary");
+      const primaryAgents = agents.filter((a) => a.mode === "primary" && !a.builtIn);
       globalStateStore.setAgents(primaryAgents);
-      if (defaultAgent) {
+      if (defaultAgent && primaryAgents.some((agent) => agent.name === defaultAgent)) {
         globalStateStore.setCurrentAgent(defaultAgent);
       }
       if (primaryAgents.length === 0) {
         await bot.sendTemporaryMessage("No primary agents found.");
         return;
       }
-      const agentList = primaryAgents.map((a) => {
-        const isSelected = a.name === defaultAgent ? " (Default)" : "";
-        return `- *${a.name}*${isSelected}: ${a.description || "No description"}`;
-      }).join("\n");
-      const message = `*Available Primary Agents:*
-
-${agentList}`;
-      await bot.sendTemporaryMessage(message, 3e4);
+      const keyboard = new InlineKeyboard();
+      primaryAgents.forEach((agent) => {
+        const isSelected = agent.name === defaultAgent ? "\u2705 " : "";
+        keyboard.text(`${isSelected}${agent.name}`, `agent:${agent.name}`).row();
+      });
+      const message = "*Select an agent:*";
+      await bot.sendTemporaryMessage(message, 3e4, {
+        parse_mode: "Markdown",
+        reply_markup: keyboard
+      });
     } catch (error) {
       logger.error("Failed to list agents", { error: String(error) });
       await bot.sendTemporaryMessage("\u274C Failed to list agents");
@@ -374,7 +402,7 @@ function createHelpCommandHandler({ config }) {
       await ctx.reply("You are not authorized to use this bot.");
       return;
     }
-    const helpMessage = "Available commands:\n\n/new - Create a new OpenCode session.\n/deletesessions - Delete all OpenCode sessions.\n/sessions - List all active OpenCode sessions.\n/agents - List available agents.\n/todos - Show current todos.\n/tab - Send a Tab key to the active session.\n/esc - Send an Escape key to the active session.\n/help - Show this help message.\n\nUsage:\n- Use /new to create a new session.\n- Send messages in this chat to interact with the active session.\n- Send voice messages or audio files (max 25MB) to transcribe and send them as prompts.\n- Use Tab and Esc buttons or commands to send special keys.\n- Admin-only commands (like /deletesessions) are restricted to configured users.\n\nNote: All commands require you to be a configured allowed user. The bot enforces this via its middleware and command-level checks.";
+    const helpMessage = "Available commands:\n\n/new - Create a new OpenCode session.\n/deletesessions - Delete all OpenCode sessions.\n/sessions - List all active OpenCode sessions.\n/agents - List available agents.\n/todos - Show current todos.\n/tab - Send a Tab key to the active session.\n/esc - Send an Escape key to the active session.\n/help - Show this help message.\n\nUsage:\n- Use /new to create a new session.\n- Use /todos to list the current todos.\n- Send messages in this chat to interact with the active session.\n- Send voice messages or audio files (max 25MB) to transcribe and send them as prompts.\n- Use Tab and Esc buttons or commands to send special keys.\n- Admin-only commands (like /deletesessions) are restricted to configured users.\n\nNote: All commands require you to be a configured allowed user. The bot enforces this via its middleware and command-level checks.";
     await ctx.reply(helpMessage, getDefaultKeyboardOptions());
   };
 }
@@ -471,7 +499,7 @@ function createNewCommandHandler({
 }
 
 // src/commands/sessions.ts
-import { InlineKeyboard } from "grammy";
+import { InlineKeyboard as InlineKeyboard2 } from "grammy";
 function getSessionInfo(session) {
   return session.properties?.info ?? session;
 }
@@ -527,7 +555,7 @@ function createSessionsCommandHandler({ config, client, logger, bot }) {
       if (limit) {
         sessions = sessions.slice(0, limit);
       }
-      const keyboard = new InlineKeyboard();
+      const keyboard = new InlineKeyboard2();
       sessions.forEach((session) => {
         const label = getSessionLabel(session);
         keyboard.text(label, `session:${session.id}`).row();
@@ -619,7 +647,7 @@ ${lines.join("\n")}`;
 }
 
 // src/commands/question-callback.command.ts
-import { InlineKeyboard as InlineKeyboard2 } from "grammy";
+import { InlineKeyboard as InlineKeyboard3 } from "grammy";
 var createQuestionCallbackHandler = (deps) => async (ctx) => {
   if (!ctx.callbackQuery || !ctx.callbackQuery.data) return;
   const data = ctx.callbackQuery.data;
@@ -668,7 +696,7 @@ var createQuestionCallbackHandler = (deps) => async (ctx) => {
       await ctx.answerCallbackQuery();
       await proceedToNext(ctx, deps, questionId, questionIndex);
     } else {
-      const keyboard = new InlineKeyboard2();
+      const keyboard = new InlineKeyboard3();
       question.options.forEach((opt, idx) => {
         const isSelected = currentAnswers.includes(opt.label);
         const icon = isSelected ? "\u2611 " : "\u2610 ";
@@ -704,7 +732,7 @@ ${question.question}
   if (nextIndex < session.questions.length) {
     const nextQuestion = session.questions[nextIndex];
     const isMultiple = nextQuestion.multiple ?? false;
-    const keyboard = new InlineKeyboard2();
+    const keyboard = new InlineKeyboard3();
     nextQuestion.options.forEach((option, optionIndex) => {
       const icon = isMultiple ? "\u2610 " : "";
       keyboard.text(`${icon}${option.label}`, `q:${questionId}:${nextIndex}:${optionIndex}`).row();
@@ -888,6 +916,7 @@ function createTelegramBot(config, client, logger, globalStateStore, questionTra
   bot.on("message:voice", createAudioMessageHandler(commandDeps));
   bot.on("message:audio", createAudioMessageHandler(commandDeps));
   bot.on("callback_query:data", createQuestionCallbackHandler(commandDeps));
+  bot.on("callback_query:data", createAgentsCallbackHandler(commandDeps));
   bot.catch((error) => {
     console.error("[Bot] Bot error caught:", error);
     logger.error("Bot error", { error: String(error) });
@@ -1076,7 +1105,7 @@ async function handleMessageUpdated(event, context) {
 }
 
 // src/events/question-asked.ts
-import { InlineKeyboard as InlineKeyboard3 } from "grammy";
+import { InlineKeyboard as InlineKeyboard4 } from "grammy";
 async function handleQuestionAsked(event, context) {
   const { id: questionId, sessionID, questions } = event.properties;
   console.log(`[TelegramRemote] Question asked: ${questionId} (${questions.length} questions)`);
@@ -1091,7 +1120,7 @@ async function sendQuestion(context, questionId, index) {
   const question = session.questions[index];
   const isMultiple = question.multiple ?? false;
   const currentAnswers = session.answers[index] || [];
-  const keyboard = new InlineKeyboard3();
+  const keyboard = new InlineKeyboard4();
   question.options.forEach((option, optionIndex) => {
     const isSelected = currentAnswers.includes(option.label);
     const icon = isMultiple ? isSelected ? "\u2611 " : "\u2610 " : "";
