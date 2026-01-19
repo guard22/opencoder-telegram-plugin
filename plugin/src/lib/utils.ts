@@ -1,8 +1,8 @@
 import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import type { Bot } from "grammy";
+import type { TelegramQueue } from "../services/telegram-queue.service.js";
 import { createDefaultKeyboard } from "./keyboard.js";
-import type { TelegramQueue } from "./telegram-queue.js";
 
 /**
  * Writes an event to a JSON file in the /debug folder for debugging purposes
