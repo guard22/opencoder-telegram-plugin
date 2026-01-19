@@ -2,7 +2,13 @@ import type { Context } from "grammy";
 import { getDefaultKeyboardOptions } from "../lib/utils.js";
 import type { CommandDeps } from "./types.js";
 
-export function createTabCommandHandler({ config, client, logger, globalStateStore }: CommandDeps) {
+export function createTabCommandHandler({
+  config,
+  client,
+  logger,
+  globalStateStore,
+  bot,
+}: CommandDeps) {
   return async (ctx: Context) => {
     console.log("[Bot] /tab command received");
     if (ctx.chat?.type !== "private") return;
@@ -15,37 +21,37 @@ export function createTabCommandHandler({ config, client, logger, globalStateSto
       return;
     }
 
-    const sessionId = globalStateStore.getActiveSession();
+    let agents = globalStateStore.getAgents();
 
-    if (!sessionId) {
-      await ctx.reply("❌ No active session. Use /new to create one.", getDefaultKeyboardOptions());
+    // If no agents in store, try to fetch them
+    if (agents.length === 0) {
+      try {
+        const agentsResponse = await client.app.agents();
+        if (agentsResponse.data) {
+          const allAgents = agentsResponse.data as any[];
+          const primaryAgents = allAgents.filter((a: any) => a.mode === "primary" && !a.builtIn);
+          globalStateStore.setAgents(primaryAgents);
+          agents = primaryAgents;
+        }
+      } catch (err) {
+        logger.error("Failed to fetch agents in /tab", { error: String(err) });
+      }
+    }
+
+    if (agents.length === 0) {
+      await bot.sendTemporaryMessage("❌ No agents available.");
       return;
     }
 
-    try {
-      const response = await client.session.prompt({
-        path: { id: sessionId },
-        body: {
-          parts: [{ type: "text", text: "\t" }],
-        },
-      });
+    const currentAgentName = globalStateStore.getCurrentAgent();
+    const currentIndex = agents.findIndex((a) => a.name === currentAgentName);
 
-      if (response.error) {
-        logger.error("Failed to send tab to OpenCode", {
-          error: response.error,
-          sessionId,
-        });
-        await ctx.reply("❌ Failed to send tab", getDefaultKeyboardOptions());
-        return;
-      }
+    // Cycle to next (or start at 0 if current not found)
+    const nextIndex = (currentIndex + 1) % agents.length;
+    const nextAgent = agents[nextIndex];
 
-      logger.debug("Sent tab to OpenCode", { sessionId });
-    } catch (error) {
-      logger.error("Failed to send tab to OpenCode", {
-        error: String(error),
-        sessionId,
-      });
-      await ctx.reply("❌ Failed to send tab", getDefaultKeyboardOptions());
-    }
+    globalStateStore.setCurrentAgent(nextAgent.name);
+
+    await bot.sendTemporaryMessage(`🔄 Active agent: ${nextAgent.name}`);
   };
 }
