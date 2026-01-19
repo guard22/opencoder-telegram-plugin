@@ -8,6 +8,29 @@ export async function handleMessagePartUpdated(
   const logger = createLogger(context.client);
   const part = event.properties.part;
 
+  if (!part || typeof part.type !== "string") {
+    logger.warn("Message part update missing type");
+    return;
+  }
+
+  if (part.type === "step-start") {
+    if (part.sessionID) {
+      context.stepUpdateService.start(part.sessionID);
+    } else {
+      logger.warn("step-start received without sessionID");
+    }
+    return;
+  }
+
+  if (part.type === "step-finish") {
+    if (part.sessionID) {
+      await context.stepUpdateService.finish(part.sessionID);
+    } else {
+      logger.warn("step-finish received without sessionID");
+    }
+    return;
+  }
+
   if (part.type === "text") {
     const text = part.text;
     context.globalStateStore.setLastMessagePartUpdate(text);

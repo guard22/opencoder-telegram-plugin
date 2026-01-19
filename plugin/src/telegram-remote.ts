@@ -16,6 +16,7 @@ import { GlobalStateStore } from "./global-state-store.js";
 import { createLogger } from "./lib/logger.js";
 import { writeEventToDebugFile } from "./lib/utils.js";
 import { QuestionTracker } from "./question-tracker.js";
+import { StepUpdateService } from "./services/step-update-service.js";
 
 export const TelegramRemote: Plugin = async ({ client }) => {
   console.log("[TelegramRemote] Plugin initialization started");
@@ -52,6 +53,13 @@ export const TelegramRemote: Plugin = async ({ client }) => {
   // So we should update createTelegramBot signature.
   const bot = createTelegramBot(config, client, logger, globalStateStore, questionTracker);
   console.log("[TelegramRemote] Bot created successfully");
+
+  const stepUpdateService = new StepUpdateService(
+    bot,
+    globalStateStore,
+    logger,
+    config.stepUpdateIntervalMs,
+  );
 
   console.log("[TelegramRemote] Starting Telegram bot polling...");
   bot.start().catch((error) => {
@@ -103,6 +111,7 @@ export const TelegramRemote: Plugin = async ({ client }) => {
     bot,
     globalStateStore,
     questionTracker,
+    stepUpdateService,
   };
 
   // Event type to handler mapping
