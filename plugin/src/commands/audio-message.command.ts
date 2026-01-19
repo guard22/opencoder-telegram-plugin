@@ -125,10 +125,12 @@ export function createAudioMessageHandler({
       }
 
       // Send transcribed text as prompt
+      const currentAgent = globalStateStore.getCurrentAgent();
       const promptResponse = await client.session.prompt({
         path: { id: sessionId },
         body: {
           parts: [{ type: "text", text: result.text }],
+          agent: currentAgent || undefined,
         },
       });
 

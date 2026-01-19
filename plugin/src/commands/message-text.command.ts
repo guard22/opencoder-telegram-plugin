@@ -40,10 +40,12 @@ export function createMessageTextHandler({
     const userMessage = ctx.message?.text;
 
     try {
+      const currentAgent = globalStateStore.getCurrentAgent();
       const response = await client.session.prompt({
         path: { id: sessionId },
         body: {
           parts: [{ type: "text", text: userMessage || "" }],
+          agent: currentAgent || undefined,
         },
       });
 
