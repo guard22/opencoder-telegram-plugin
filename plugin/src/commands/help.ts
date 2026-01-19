@@ -20,6 +20,7 @@ export function createHelpCommandHandler(deps: CommandDeps) {
       "Available commands:\n" +
       "\n" +
       "/new - Create a new OpenCode session.\n" +
+      "/projects - List all known projects.\n" +
       "/deletesessions - Delete all OpenCode sessions.\n" +
       "/sessions - List all active OpenCode sessions.\n" +
       "/agents - List available agents.\n" +

@@ -5,6 +5,7 @@ export { createHelpCommandHandler } from "./help.js";
 export { createMessageTextHandler } from "./message-text.command.js";
 export { createModelsCommandHandler } from "./models.js";
 export { createNewCommandHandler } from "./new.js";
+export { createProjectsCommandHandler } from "./projects.js";
 export { createSessionsCommandHandler } from "./sessions.js";
 export { createTabCommandHandler } from "./tab.js";
 export { createTodosCommandHandler } from "./todos.js";

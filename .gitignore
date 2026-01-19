@@ -27,3 +27,5 @@ core
 
 debug/*
 restart*
+
+nohup*

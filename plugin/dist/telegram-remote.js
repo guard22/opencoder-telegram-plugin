@@ -591,7 +591,7 @@ function createHelpCommandHandler(deps) {
       await deps.queue.enqueue(() => ctx.reply("You are not authorized to use this bot."));
       return;
     }
-    const helpMessage = "Available commands:\n\n/new - Create a new OpenCode session.\n/deletesessions - Delete all OpenCode sessions.\n/sessions - List all active OpenCode sessions.\n/agents - List available agents.\n/todos - Show current todos.\n/tab - Send a Tab key to the active session.\n/esc - Send an Escape key to the active session.\n/help - Show this help message.\n\nUsage:\n- Use /new to create a new session.\n- Use /todos to list the current todos.\n- Send messages in this chat to interact with the active session.\n- Send voice messages or audio files (max 25MB) to transcribe and send them as prompts.\n- Use Tab and Esc buttons or commands to send special keys.\n- Admin-only commands (like /deletesessions) are restricted to configured users.\n\nNote: All commands require you to be a configured allowed user. The bot enforces this via its middleware and command-level checks.";
+    const helpMessage = "Available commands:\n\n/new - Create a new OpenCode session.\n/projects - List all known projects.\n/deletesessions - Delete all OpenCode sessions.\n/sessions - List all active OpenCode sessions.\n/agents - List available agents.\n/todos - Show current todos.\n/tab - Send a Tab key to the active session.\n/esc - Send an Escape key to the active session.\n/help - Show this help message.\n\nUsage:\n- Use /new to create a new session.\n- Use /todos to list the current todos.\n- Send messages in this chat to interact with the active session.\n- Send voice messages or audio files (max 25MB) to transcribe and send them as prompts.\n- Use Tab and Esc buttons or commands to send special keys.\n- Admin-only commands (like /deletesessions) are restricted to configured users.\n\nNote: All commands require you to be a configured allowed user. The bot enforces this via its middleware and command-level checks.";
     await deps.queue.enqueue(() => ctx.reply(helpMessage, getDefaultKeyboardOptions()));
   };
 }
@@ -751,6 +751,40 @@ function createNewCommandHandler(deps) {
       await deps.queue.enqueue(
         () => ctx.reply("\u274C Failed to create session", getDefaultKeyboardOptions())
       );
+    }
+  };
+}
+
+// src/commands/projects.ts
+function createProjectsCommandHandler({ client, logger, bot }) {
+  return async (ctx) => {
+    console.log("[Bot] /projects command received");
+    if (ctx.chat?.type !== "private") return;
+    try {
+      const projectsResponse = await client.project.list();
+      if (projectsResponse.error) {
+        logger.error("Failed to list projects", { error: projectsResponse.error });
+        await bot.sendTemporaryMessage("\u274C Failed to list projects");
+        return;
+      }
+      const projects = projectsResponse.data || [];
+      if (projects.length === 0) {
+        await bot.sendTemporaryMessage("No projects found.");
+        return;
+      }
+      const message = projects.map((p, index) => {
+        const name = p.worktree.split("/").pop() || p.worktree;
+        return `${index + 1}. *${name}*
+   \`${p.worktree}\``;
+      }).join("\n\n");
+      await bot.sendMessage(`*Projects (${projects.length})*:
+
+${message}`, {
+        parse_mode: "Markdown"
+      });
+    } catch (error) {
+      logger.error("Failed to list projects", { error: String(error) });
+      await bot.sendTemporaryMessage("\u274C Failed to list projects");
     }
   };
 }
@@ -1048,6 +1082,7 @@ function createTelegramBot(config, client, logger, globalStateStore, questionTra
     questionTracker
   };
   bot.command("new", createNewCommandHandler(commandDeps));
+  bot.command("projects", createProjectsCommandHandler(commandDeps));
   bot.command("deletesessions", createDeleteSessionsCommandHandler(commandDeps));
   bot.command("sessions", createSessionsCommandHandler(commandDeps));
   bot.command("agents", createAgentsCommandHandler(commandDeps));
@@ -1562,7 +1597,8 @@ var StepUpdateService = class {
     this.sessions.set(sessionId, {
       intervalId,
       isSending: false,
-      finalSent: false
+      finalSent: false,
+      sendingPromise: Promise.resolve()
     });
     void this.sendUpdate(sessionId, false);
   }
@@ -1591,17 +1627,26 @@ var StepUpdateService = class {
     }
   }
   async sendUpdate(sessionId, isFinal) {
+    const state = this.sessions.get(sessionId);
+    if (state) {
+      const nextUpdate = state.sendingPromise.then(async () => {
+        return await this.performUpdate(sessionId, isFinal, state);
+      });
+      state.sendingPromise = nextUpdate.then(() => {
+      }).catch(() => {
+      });
+      return nextUpdate;
+    }
+    return await this.performUpdate(sessionId, isFinal, void 0);
+  }
+  async performUpdate(sessionId, isFinal, state) {
     const text = this.globalStateStore.getLastUpdate(sessionId);
     if (!text || text.trim() === "") {
-      if (isFinal) {
-        const state2 = this.sessions.get(sessionId);
-        if (state2) {
-          state2.finalSent = true;
-        }
+      if (isFinal && state) {
+        state.finalSent = true;
       }
       return void 0;
     }
-    const state = this.sessions.get(sessionId);
     if (!state) {
       if (isFinal) {
         try {
@@ -1623,9 +1668,6 @@ var StepUpdateService = class {
       if (isFinal) {
         state.finalSent = true;
       }
-      return state.messageId;
-    }
-    if (state.isSending && state.inFlightText === text) {
       return state.messageId;
     }
     try {

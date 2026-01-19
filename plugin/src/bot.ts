@@ -13,6 +13,7 @@ import {
   createMessageTextHandler,
   createModelsCommandHandler,
   createNewCommandHandler,
+  createProjectsCommandHandler,
   createSessionsCommandHandler,
   createTabCommandHandler,
   createTodosCommandHandler,
@@ -103,6 +104,7 @@ export function createTelegramBot(
   };
 
   bot.command("new", createNewCommandHandler(commandDeps));
+  bot.command("projects", createProjectsCommandHandler(commandDeps));
   bot.command("deletesessions", createDeleteSessionsCommandHandler(commandDeps));
   bot.command("sessions", createSessionsCommandHandler(commandDeps));
   bot.command("agents", createAgentsCommandHandler(commandDeps));
