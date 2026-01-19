@@ -23,29 +23,29 @@ export function createEscCommandHandler({ config, client, logger, globalStateSto
     }
 
     try {
-      const response = await client.session.prompt({
+      const response = await client.session.abort({
         path: { id: sessionId },
-        body: {
-          parts: [{ type: "text", text: "\x1b" }],
-        },
       });
 
       if (response.error) {
-        logger.error("Failed to send escape to OpenCode", {
+        logger.error("Failed to stop session", {
           error: response.error,
           sessionId,
         });
-        await ctx.reply("❌ Failed to send escape", getDefaultKeyboardOptions());
+        await ctx.reply("❌ Failed to stop session", getDefaultKeyboardOptions());
         return;
       }
 
-      logger.debug("Sent escape to OpenCode", { sessionId });
+      const sessionTitle = globalStateStore.getSessionTitle(sessionId) || sessionId;
+      await ctx.reply(`🛑 Session stopped: ${sessionTitle}`, getDefaultKeyboardOptions());
+
+      logger.debug("Stopped session", { sessionId });
     } catch (error) {
-      logger.error("Failed to send escape to OpenCode", {
+      logger.error("Failed to stop session", {
         error: String(error),
         sessionId,
       });
-      await ctx.reply("❌ Failed to send escape", getDefaultKeyboardOptions());
+      await ctx.reply("❌ Failed to stop session", getDefaultKeyboardOptions());
     }
   };
 }
