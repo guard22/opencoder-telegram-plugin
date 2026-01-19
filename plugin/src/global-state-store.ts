@@ -24,6 +24,7 @@ export class GlobalStateStore {
   private lastResponse: string | null = null;
   private todos: TodoItem[] = [];
   private activeSessionId: string | null = null;
+  private sessionTitles: Map<string, string> = new Map();
 
   constructor(allowedEventTypes: string[]) {
     this.allowedEventTypes = new Set(allowedEventTypes);
@@ -32,6 +33,14 @@ export class GlobalStateStore {
   // Session tracking methods
   setActiveSession(sessionId: string): void {
     this.activeSessionId = sessionId;
+  }
+
+  setSessionTitle(sessionId: string, title: string): void {
+    this.sessionTitles.set(sessionId, title);
+  }
+
+  getSessionTitle(sessionId: string): string | null {
+    return this.sessionTitles.get(sessionId) ?? null;
   }
 
   getActiveSession(): string | null {
@@ -91,6 +100,11 @@ export class GlobalStateStore {
 
   getCurrentSessionTitle(): string | null {
     return this.currentSessionTitle;
+  }
+
+  setCurrentSessionTitleForSession(sessionId: string, title: string): void {
+    this.currentSessionTitle = title;
+    this.sessionTitles.set(sessionId, title);
   }
 
   setSessionStatus(status: string): void {

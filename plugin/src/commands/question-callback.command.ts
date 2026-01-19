@@ -12,8 +12,10 @@ export const createQuestionCallbackHandler =
       if (!sessionId) return;
 
       deps.globalStateStore.setActiveSession(sessionId);
-      await ctx.answerCallbackQuery({ text: "Active session set." });
-      await deps.bot.sendTemporaryMessage(`✅ Active session set: ${sessionId}`, 3000);
+      const sessionTitle = deps.globalStateStore.getSessionTitle(sessionId);
+      const label = sessionTitle ?? sessionId;
+      await ctx.answerCallbackQuery({ text: `Active session set: ${label}` });
+      await deps.bot.sendTemporaryMessage(`✅ Active session set: ${label}`, 3000);
       return;
     }
 

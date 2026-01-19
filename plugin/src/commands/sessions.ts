@@ -37,7 +37,13 @@ function getSessionLabel(session: SessionWithArchive): string {
   return id;
 }
 
-export function createSessionsCommandHandler({ config, client, logger, bot }: CommandDeps) {
+export function createSessionsCommandHandler({
+  config,
+  client,
+  logger,
+  bot,
+  globalStateStore,
+}: CommandDeps) {
   return async (ctx: Context) => {
     console.log("[Bot] /sessions command received");
     if (ctx.chat?.id !== config.groupId) return;
@@ -84,6 +90,7 @@ export function createSessionsCommandHandler({ config, client, logger, bot }: Co
       const keyboard = new InlineKeyboard();
       sessions.forEach((session) => {
         const label = getSessionLabel(session);
+        globalStateStore.setSessionTitle(session.id, label);
         keyboard.text(label, `session:${session.id}`).row();
       });
 

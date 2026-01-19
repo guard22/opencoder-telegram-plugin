@@ -38,6 +38,16 @@ export async function handleMessageUpdated(
           console.error("[TelegramRemote] Failed to send document:", error);
           logger.error("Failed to send document", { error: String(error) });
         }
+      } else {
+        console.log(
+          `[TelegramRemote] Message ${message.id} completed with ${lines.length} lines. Sending as text.`,
+        );
+        try {
+          await context.bot.sendMessage(message.content);
+        } catch (error) {
+          console.error("[TelegramRemote] Failed to send message:", error);
+          logger.error("Failed to send message", { error: String(error) });
+        }
       }
     }
   }
