@@ -41,7 +41,10 @@ export async function handleMessagePartUpdated(
         try {
           context.globalStateStore.setLastUpdate(part.sessionID, text);
           context.globalStateStore.setLastUpdateDelta(part.sessionID, event.properties.delta);
-          logger.info("Stored lastUpdate and lastUpdateDelta", { sessionID: part.sessionID, delta: event.properties.delta });
+          logger.info("Stored lastUpdate and lastUpdateDelta", {
+            sessionID: part.sessionID,
+            delta: event.properties.delta,
+          });
         } catch (err) {
           logger.warn("Failed to store last update data", { error: String(err) });
         }

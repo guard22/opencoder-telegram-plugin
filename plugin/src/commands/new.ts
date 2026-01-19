@@ -2,13 +2,8 @@ import type { Context } from "grammy";
 import { getDefaultKeyboardOptions } from "../lib/utils.js";
 import type { CommandDeps } from "./types.js";
 
-export function createNewCommandHandler({
-  bot,
-  config,
-  client,
-  logger,
-  globalStateStore,
-}: CommandDeps) {
+export function createNewCommandHandler(deps: CommandDeps) {
+  const { bot, client, logger, globalStateStore } = deps;
   return async (ctx: Context) => {
     console.log("[Bot] /new command received");
     if (ctx.chat?.type !== "private") return;
@@ -17,7 +12,9 @@ export function createNewCommandHandler({
       const createSessionResponse = await client.session.create({ body: {} });
       if (createSessionResponse.error) {
         logger.error("Failed to create session", { error: createSessionResponse.error });
-        await ctx.reply("❌ Failed to create session", getDefaultKeyboardOptions());
+        await deps.queue.enqueue(() =>
+          ctx.reply("❌ Failed to create session", getDefaultKeyboardOptions()),
+        );
         return;
       }
 
@@ -31,7 +28,9 @@ export function createNewCommandHandler({
       await bot.sendMessage(`✅ Session created: ${sessionId}`);
     } catch (error) {
       logger.error("Failed to create new session", { error: String(error) });
-      await ctx.reply("❌ Failed to create session", getDefaultKeyboardOptions());
+      await deps.queue.enqueue(() =>
+        ctx.reply("❌ Failed to create session", getDefaultKeyboardOptions()),
+      );
     }
   };
 }

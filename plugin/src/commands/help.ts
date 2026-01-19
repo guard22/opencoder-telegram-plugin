@@ -2,7 +2,8 @@ import type { Context } from "grammy";
 import { getDefaultKeyboardOptions } from "../lib/utils.js";
 import type { CommandDeps } from "./types.js";
 
-export function createHelpCommandHandler({ config }: CommandDeps) {
+export function createHelpCommandHandler(deps: CommandDeps) {
+  const { config } = deps;
   return async (ctx: Context) => {
     console.log("[Bot] /help command received");
     if (ctx.chat?.type !== "private") return;
@@ -11,7 +12,7 @@ export function createHelpCommandHandler({ config }: CommandDeps) {
     const userId = ctx.from?.id;
     if (!userId || !config.allowedUserIds.includes(userId)) {
       console.log(`[Bot] /help attempt by unauthorized user ${userId}`);
-      await ctx.reply("You are not authorized to use this bot.");
+      await deps.queue.enqueue(() => ctx.reply("You are not authorized to use this bot."));
       return;
     }
 
@@ -37,6 +38,6 @@ export function createHelpCommandHandler({ config }: CommandDeps) {
       "\n" +
       "Note: All commands require you to be a configured allowed user. The bot enforces this via its middleware and command-level checks.";
 
-    await ctx.reply(helpMessage, getDefaultKeyboardOptions());
+    await deps.queue.enqueue(() => ctx.reply(helpMessage, getDefaultKeyboardOptions()));
   };
 }

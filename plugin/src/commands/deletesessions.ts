@@ -1,12 +1,8 @@
 import type { Context } from "grammy";
 import type { CommandDeps } from "./types.js";
 
-export function createDeleteSessionsCommandHandler({
-  config,
-  client,
-  logger,
-  globalStateStore,
-}: CommandDeps) {
+export function createDeleteSessionsCommandHandler(deps: CommandDeps) {
+  const { config, client, logger, globalStateStore } = deps;
   return async (ctx: Context) => {
     console.log("[Bot] /deletesessions command received");
     if (ctx.chat?.type !== "private") return;
@@ -19,7 +15,7 @@ export function createDeleteSessionsCommandHandler({
 
       if (sessionsResponse.error) {
         logger.error("Failed to list sessions", { error: sessionsResponse.error });
-        await ctx.reply("❌ Failed to list sessions");
+        await deps.queue.enqueue(() => ctx.reply("❌ Failed to list sessions"));
         return;
       }
 
@@ -51,13 +47,15 @@ export function createDeleteSessionsCommandHandler({
       }
     } catch (error) {
       logger.error("Failed to delete sessions", { error: String(error) });
-      await ctx.reply("❌ Failed to delete sessions");
+      await deps.queue.enqueue(() => ctx.reply("❌ Failed to delete sessions"));
       return;
     }
 
     // Clear active session
     globalStateStore.clearActiveSession();
 
-    await ctx.reply(`Deleted ${deletedSessions} sessions (${failedSessions} failed).`);
+    await deps.queue.enqueue(() =>
+      ctx.reply(`Deleted ${deletedSessions} sessions (${failedSessions} failed).`),
+    );
   };
 }

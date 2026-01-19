@@ -6,6 +6,8 @@ interface SessionState {
     intervalId: NodeJS.Timeout;
     messageId?: number;
     lastSentText?: string;
+    inFlightText?: string;
+    isSending: boolean;
     finalSent: boolean;
 }
 
@@ -30,6 +32,7 @@ export class StepUpdateService {
 
         this.sessions.set(sessionId, {
             intervalId,
+            isSending: false,
             finalSent: false,
         });
 
@@ -98,16 +101,21 @@ export class StepUpdateService {
             return state.messageId;
         }
 
-        if (state.lastSentText === text && !isFinal) {
+        if (state.lastSentText === text) {
+            if (isFinal) {
+                state.finalSent = true;
+            }
             return state.messageId;
         }
 
-        if (isFinal && state.lastSentText === text && state.messageId) {
-            state.finalSent = true;
+        if (state.isSending && state.inFlightText === text) {
             return state.messageId;
         }
 
         try {
+            state.isSending = true;
+            state.inFlightText = text;
+
             if (state.messageId) {
                 await this.bot.editMessage(state.messageId, text);
             } else {
@@ -126,6 +134,11 @@ export class StepUpdateService {
                 sessionId,
                 isFinal,
             });
+        } finally {
+            state.isSending = false;
+            if (state.inFlightText === text) {
+                state.inFlightText = undefined;
+            }
         }
 
         return state.messageId;

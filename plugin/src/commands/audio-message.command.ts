@@ -17,19 +17,17 @@ const SUPPORTED_FORMATS = [
 
 const MAX_FILE_SIZE = 25 * 1024 * 1024; // 25MB
 
-export function createAudioMessageHandler({
-  config,
-  client,
-  logger,
-  globalStateStore,
-}: CommandDeps) {
+export function createAudioMessageHandler(deps: CommandDeps) {
+  const { config, client, logger, globalStateStore } = deps;
   return async (ctx: Context) => {
     console.log("[Bot] Audio/voice message received");
 
     // Check if transcription is enabled
     if (!config.audioTranscriptionApiKey || !config.audioTranscriptionProvider) {
-      await ctx.reply(
-        "🎙️ Voice transcription is not configured. Please add AUDIO_TRANSCRIPTION_API_KEY to .env",
+      await deps.queue.enqueue(() =>
+        ctx.reply(
+          "🎙️ Voice transcription is not configured. Please add AUDIO_TRANSCRIPTION_API_KEY to .env",
+        ),
       );
       return;
     }
@@ -42,20 +40,20 @@ export function createAudioMessageHandler({
     const fileToDownload = voice || audio;
 
     if (!fileToDownload) {
-      await ctx.reply("❌ No audio file found in message");
+      await deps.queue.enqueue(() => ctx.reply("❌ No audio file found in message"));
       return;
     }
 
     // Validate file size
     if (fileToDownload.file_size && fileToDownload.file_size > MAX_FILE_SIZE) {
-      await ctx.reply("❌ Audio file too large (max 25MB)");
+      await deps.queue.enqueue(() => ctx.reply("❌ Audio file too large (max 25MB)"));
       return;
     }
 
     // Validate MIME type
     const mimeType = fileToDownload.mime_type || "audio/ogg";
     if (!SUPPORTED_FORMATS.includes(mimeType)) {
-      await ctx.reply(`❌ Unsupported audio format: ${mimeType}`);
+      await deps.queue.enqueue(() => ctx.reply(`❌ Unsupported audio format: ${mimeType}`));
       return;
     }
 
@@ -84,7 +82,7 @@ export function createAudioMessageHandler({
       logger.info("Downloaded audio file", { tempFilePath, mimeType });
 
       // Send "processing" message
-      const processingMsg = await ctx.reply("🎙️ Transcribing audio...");
+      const processingMsg = await deps.queue.enqueue(() => ctx.reply("🎙️ Transcribing audio..."));
 
       // Transcribe
       const result = await transcribeAudio(
@@ -99,11 +97,15 @@ export function createAudioMessageHandler({
 
       // Delete processing message
       if (ctx.chat?.id) {
-        await ctx.api.deleteMessage(ctx.chat.id, processingMsg.message_id);
+        await deps.queue.enqueue(() =>
+          ctx.api.deleteMessage(ctx.chat!.id, processingMsg.message_id),
+        );
       }
 
       if (result.error || !result.text.trim()) {
-        await ctx.reply(`❌ Transcription failed: ${result.error || "Empty transcription"}`);
+        await deps.queue.enqueue(() =>
+          ctx.reply(`❌ Transcription failed: ${result.error || "Empty transcription"}`),
+        );
         return;
       }
 
@@ -117,7 +119,9 @@ export function createAudioMessageHandler({
         const createSessionResponse = await client.session.create({ body: {} });
         if (createSessionResponse.error) {
           logger.error("Failed to create session", { error: createSessionResponse.error });
-          await ctx.reply("❌ Failed to initialize session for voice transcription");
+          await deps.queue.enqueue(() =>
+            ctx.reply("❌ Failed to initialize session for voice transcription"),
+          );
           return;
         }
 
@@ -140,18 +144,20 @@ export function createAudioMessageHandler({
         logger.error("Failed to send transcription to OpenCode", {
           error: promptResponse.error,
         });
-        await ctx.reply("❌ Failed to send transcription to OpenCode");
+        await deps.queue.enqueue(() => ctx.reply("❌ Failed to send transcription to OpenCode"));
         return;
       }
 
-      await ctx.reply(`✅ Transcribed and sent:\n\`${result.text}\``, {
-        parse_mode: "Markdown",
-      });
+      await deps.queue.enqueue(() =>
+        ctx.reply(`✅ Transcribed and sent:\n\`${result.text}\``, {
+          parse_mode: "Markdown",
+        }),
+      );
 
       logger.debug("Sent transcription to OpenCode", { sessionId });
     } catch (error) {
       logger.error("Audio message handling failed", { error: String(error) });
-      await ctx.reply(`❌ Failed to process audio: ${String(error)}`);
+      await deps.queue.enqueue(() => ctx.reply(`❌ Failed to process audio: ${String(error)}`));
     }
   };
 }

@@ -9,7 +9,7 @@ import {
 // src/bot.ts
 import { Bot, InputFile } from "grammy";
 
-// src/callbacks/agents-callback.command.ts
+// src/commands/agents-callback.command.ts
 var createAgentsCallbackHandler = (deps) => async (ctx) => {
   if (!ctx.callbackQuery || !ctx.callbackQuery.data) return;
   if (ctx.chat?.type !== "private") return;
@@ -34,7 +34,38 @@ var createAgentsCallbackHandler = (deps) => async (ctx) => {
   }
 };
 
-// src/callbacks/question-callback.command.ts
+// src/commands/models-callback.command.ts
+var createModelsCallbackHandler = (deps) => async (ctx) => {
+  if (!ctx.callbackQuery || !ctx.callbackQuery.data) return;
+  if (ctx.chat?.type !== "private") return;
+  const data = ctx.callbackQuery.data;
+  if (!data.startsWith("model:")) return;
+  const modelId = data.replace("model:", "");
+  if (!modelId) return;
+  try {
+    const result = await deps.client.config.update({
+      body: {
+        model: modelId
+      }
+    });
+    if (result.error) {
+      throw new Error(String(result.error));
+    }
+    await ctx.answerCallbackQuery({ text: `Active model set to ${modelId}` });
+    try {
+      await ctx.editMessageText(`\u2705 Active model set to *${modelId}*`, {
+        parse_mode: "Markdown"
+      });
+    } catch (error) {
+      await deps.bot.sendTemporaryMessage(`\u2705 Active model set to ${modelId}`, 3e3);
+    }
+  } catch (error) {
+    deps.logger.error("Failed to set model", { error: String(error) });
+    await ctx.answerCallbackQuery({ text: "Failed to set model." });
+  }
+};
+
+// src/commands/question-callback.command.ts
 import { InlineKeyboard } from "grammy";
 var createQuestionCallbackHandler = (deps) => async (ctx) => {
   if (!ctx.callbackQuery || !ctx.callbackQuery.data) return;
@@ -247,17 +278,15 @@ var SUPPORTED_FORMATS = [
   "audio/opus"
 ];
 var MAX_FILE_SIZE = 25 * 1024 * 1024;
-function createAudioMessageHandler({
-  config,
-  client,
-  logger,
-  globalStateStore
-}) {
+function createAudioMessageHandler(deps) {
+  const { config, client, logger, globalStateStore } = deps;
   return async (ctx) => {
     console.log("[Bot] Audio/voice message received");
     if (!config.audioTranscriptionApiKey || !config.audioTranscriptionProvider) {
-      await ctx.reply(
-        "\u{1F399}\uFE0F Voice transcription is not configured. Please add AUDIO_TRANSCRIPTION_API_KEY to .env"
+      await deps.queue.enqueue(
+        () => ctx.reply(
+          "\u{1F399}\uFE0F Voice transcription is not configured. Please add AUDIO_TRANSCRIPTION_API_KEY to .env"
+        )
       );
       return;
     }
@@ -266,16 +295,16 @@ function createAudioMessageHandler({
     const audio = ctx.message?.audio;
     const fileToDownload = voice || audio;
     if (!fileToDownload) {
-      await ctx.reply("\u274C No audio file found in message");
+      await deps.queue.enqueue(() => ctx.reply("\u274C No audio file found in message"));
       return;
     }
     if (fileToDownload.file_size && fileToDownload.file_size > MAX_FILE_SIZE) {
-      await ctx.reply("\u274C Audio file too large (max 25MB)");
+      await deps.queue.enqueue(() => ctx.reply("\u274C Audio file too large (max 25MB)"));
       return;
     }
     const mimeType = fileToDownload.mime_type || "audio/ogg";
     if (!SUPPORTED_FORMATS.includes(mimeType)) {
-      await ctx.reply(`\u274C Unsupported audio format: ${mimeType}`);
+      await deps.queue.enqueue(() => ctx.reply(`\u274C Unsupported audio format: ${mimeType}`));
       return;
     }
     try {
@@ -293,7 +322,7 @@ function createAudioMessageHandler({
       const arrayBuffer = await response.arrayBuffer();
       await writeFile(tempFilePath, Buffer.from(arrayBuffer));
       logger.info("Downloaded audio file", { tempFilePath, mimeType });
-      const processingMsg = await ctx.reply("\u{1F399}\uFE0F Transcribing audio...");
+      const processingMsg = await deps.queue.enqueue(() => ctx.reply("\u{1F399}\uFE0F Transcribing audio..."));
       const result = await transcribeAudio(
         tempFilePath,
         {
@@ -304,10 +333,14 @@ function createAudioMessageHandler({
         logger
       );
       if (ctx.chat?.id) {
-        await ctx.api.deleteMessage(ctx.chat.id, processingMsg.message_id);
+        await deps.queue.enqueue(
+          () => ctx.api.deleteMessage(ctx.chat.id, processingMsg.message_id)
+        );
       }
       if (result.error || !result.text.trim()) {
-        await ctx.reply(`\u274C Transcription failed: ${result.error || "Empty transcription"}`);
+        await deps.queue.enqueue(
+          () => ctx.reply(`\u274C Transcription failed: ${result.error || "Empty transcription"}`)
+        );
         return;
       }
       logger.info("Transcription successful", { textLength: result.text.length });
@@ -316,7 +349,9 @@ function createAudioMessageHandler({
         const createSessionResponse = await client.session.create({ body: {} });
         if (createSessionResponse.error) {
           logger.error("Failed to create session", { error: createSessionResponse.error });
-          await ctx.reply("\u274C Failed to initialize session for voice transcription");
+          await deps.queue.enqueue(
+            () => ctx.reply("\u274C Failed to initialize session for voice transcription")
+          );
           return;
         }
         sessionId = createSessionResponse.data.id;
@@ -335,17 +370,19 @@ function createAudioMessageHandler({
         logger.error("Failed to send transcription to OpenCode", {
           error: promptResponse.error
         });
-        await ctx.reply("\u274C Failed to send transcription to OpenCode");
+        await deps.queue.enqueue(() => ctx.reply("\u274C Failed to send transcription to OpenCode"));
         return;
       }
-      await ctx.reply(`\u2705 Transcribed and sent:
+      await deps.queue.enqueue(
+        () => ctx.reply(`\u2705 Transcribed and sent:
 \`${result.text}\``, {
-        parse_mode: "Markdown"
-      });
+          parse_mode: "Markdown"
+        })
+      );
       logger.debug("Sent transcription to OpenCode", { sessionId });
     } catch (error) {
       logger.error("Audio message handling failed", { error: String(error) });
-      await ctx.reply(`\u274C Failed to process audio: ${String(error)}`);
+      await deps.queue.enqueue(() => ctx.reply(`\u274C Failed to process audio: ${String(error)}`));
     }
   };
 }
@@ -403,12 +440,8 @@ function createAgentsCommandHandler({
 }
 
 // src/commands/deletesessions.ts
-function createDeleteSessionsCommandHandler({
-  config,
-  client,
-  logger,
-  globalStateStore
-}) {
+function createDeleteSessionsCommandHandler(deps) {
+  const { config, client, logger, globalStateStore } = deps;
   return async (ctx) => {
     console.log("[Bot] /deletesessions command received");
     if (ctx.chat?.type !== "private") return;
@@ -418,7 +451,7 @@ function createDeleteSessionsCommandHandler({
       const sessionsResponse = await client.session.list();
       if (sessionsResponse.error) {
         logger.error("Failed to list sessions", { error: sessionsResponse.error });
-        await ctx.reply("\u274C Failed to list sessions");
+        await deps.queue.enqueue(() => ctx.reply("\u274C Failed to list sessions"));
         return;
       }
       const sessions = sessionsResponse.data || [];
@@ -446,11 +479,13 @@ function createDeleteSessionsCommandHandler({
       }
     } catch (error) {
       logger.error("Failed to delete sessions", { error: String(error) });
-      await ctx.reply("\u274C Failed to delete sessions");
+      await deps.queue.enqueue(() => ctx.reply("\u274C Failed to delete sessions"));
       return;
     }
     globalStateStore.clearActiveSession();
-    await ctx.reply(`Deleted ${deletedSessions} sessions (${failedSessions} failed).`);
+    await deps.queue.enqueue(
+      () => ctx.reply(`Deleted ${deletedSessions} sessions (${failedSessions} failed).`)
+    );
   };
 }
 
@@ -494,19 +529,24 @@ function getDefaultKeyboardOptions() {
 }
 
 // src/commands/esc.ts
-function createEscCommandHandler({ config, client, logger, globalStateStore }) {
+function createEscCommandHandler(deps) {
+  const { config, client, logger, globalStateStore } = deps;
   return async (ctx) => {
     console.log("[Bot] /esc command received");
     if (ctx.chat?.type !== "private") return;
     const userId = ctx.from?.id;
     if (!userId || !config.allowedUserIds.includes(userId)) {
       console.log(`[Bot] /esc attempt by unauthorized user ${userId}`);
-      await ctx.reply("You are not authorized to use this bot.", getDefaultKeyboardOptions());
+      await deps.queue.enqueue(
+        () => ctx.reply("You are not authorized to use this bot.", getDefaultKeyboardOptions())
+      );
       return;
     }
     const sessionId = globalStateStore.getActiveSession();
     if (!sessionId) {
-      await ctx.reply("\u274C No active session. Use /new to create one.", getDefaultKeyboardOptions());
+      await deps.queue.enqueue(
+        () => ctx.reply("\u274C No active session. Use /new to create one.", getDefaultKeyboardOptions())
+      );
       return;
     }
     try {
@@ -521,7 +561,9 @@ function createEscCommandHandler({ config, client, logger, globalStateStore }) {
           error: response.error,
           sessionId
         });
-        await ctx.reply("\u274C Failed to send escape", getDefaultKeyboardOptions());
+        await deps.queue.enqueue(
+          () => ctx.reply("\u274C Failed to send escape", getDefaultKeyboardOptions())
+        );
         return;
       }
       logger.debug("Sent escape to OpenCode", { sessionId });
@@ -530,34 +572,33 @@ function createEscCommandHandler({ config, client, logger, globalStateStore }) {
         error: String(error),
         sessionId
       });
-      await ctx.reply("\u274C Failed to send escape", getDefaultKeyboardOptions());
+      await deps.queue.enqueue(
+        () => ctx.reply("\u274C Failed to send escape", getDefaultKeyboardOptions())
+      );
     }
   };
 }
 
 // src/commands/help.ts
-function createHelpCommandHandler({ config }) {
+function createHelpCommandHandler(deps) {
+  const { config } = deps;
   return async (ctx) => {
     console.log("[Bot] /help command received");
     if (ctx.chat?.type !== "private") return;
     const userId = ctx.from?.id;
     if (!userId || !config.allowedUserIds.includes(userId)) {
       console.log(`[Bot] /help attempt by unauthorized user ${userId}`);
-      await ctx.reply("You are not authorized to use this bot.");
+      await deps.queue.enqueue(() => ctx.reply("You are not authorized to use this bot."));
       return;
     }
     const helpMessage = "Available commands:\n\n/new - Create a new OpenCode session.\n/deletesessions - Delete all OpenCode sessions.\n/sessions - List all active OpenCode sessions.\n/agents - List available agents.\n/todos - Show current todos.\n/tab - Send a Tab key to the active session.\n/esc - Send an Escape key to the active session.\n/help - Show this help message.\n\nUsage:\n- Use /new to create a new session.\n- Use /todos to list the current todos.\n- Send messages in this chat to interact with the active session.\n- Send voice messages or audio files (max 25MB) to transcribe and send them as prompts.\n- Use Tab and Esc buttons or commands to send special keys.\n- Admin-only commands (like /deletesessions) are restricted to configured users.\n\nNote: All commands require you to be a configured allowed user. The bot enforces this via its middleware and command-level checks.";
-    await ctx.reply(helpMessage, getDefaultKeyboardOptions());
+    await deps.queue.enqueue(() => ctx.reply(helpMessage, getDefaultKeyboardOptions()));
   };
 }
 
 // src/commands/message-text.command.ts
-function createMessageTextHandler({
-  config,
-  client,
-  logger,
-  globalStateStore
-}) {
+function createMessageTextHandler(deps) {
+  const { config, client, logger, globalStateStore } = deps;
   return async (ctx) => {
     console.log(`[Bot] Text message received: "${ctx.message?.text?.slice(0, 50)}..."`);
     if (ctx.chat?.type !== "private") return;
@@ -568,7 +609,9 @@ function createMessageTextHandler({
         const createSessionResponse = await client.session.create({ body: {} });
         if (createSessionResponse.error) {
           logger.error("Failed to create session", { error: createSessionResponse.error });
-          await ctx.reply("\u274C Failed to initialize session", getDefaultKeyboardOptions());
+          await deps.queue.enqueue(
+            () => ctx.reply("\u274C Failed to initialize session", getDefaultKeyboardOptions())
+          );
           return;
         }
         sessionId = createSessionResponse.data.id;
@@ -578,7 +621,9 @@ function createMessageTextHandler({
         });
       } catch (error) {
         logger.error("Failed to create session", { error: String(error) });
-        await ctx.reply("\u274C Failed to initialize session", getDefaultKeyboardOptions());
+        await deps.queue.enqueue(
+          () => ctx.reply("\u274C Failed to initialize session", getDefaultKeyboardOptions())
+        );
         return;
       }
     }
@@ -597,7 +642,9 @@ function createMessageTextHandler({
           error: response.error,
           sessionId
         });
-        await ctx.reply("\u274C Failed to process message", getDefaultKeyboardOptions());
+        await deps.queue.enqueue(
+          () => ctx.reply("\u274C Failed to process message", getDefaultKeyboardOptions())
+        );
         return;
       }
       logger.debug("Forwarded message to OpenCode", {
@@ -608,19 +655,79 @@ function createMessageTextHandler({
         error: String(error),
         sessionId
       });
-      await ctx.reply("\u274C Failed to process message", getDefaultKeyboardOptions());
+      await deps.queue.enqueue(
+        () => ctx.reply("\u274C Failed to process message", getDefaultKeyboardOptions())
+      );
+    }
+  };
+}
+
+// src/commands/models.ts
+import { InlineKeyboard as InlineKeyboard3 } from "grammy";
+function createModelsCommandHandler({ client, logger, bot, globalStateStore }) {
+  return async (ctx) => {
+    console.log("[Bot] /models command received");
+    if (ctx.chat?.type !== "private") return;
+    try {
+      const providersResponse = await client.provider.list();
+      if (providersResponse.error) {
+        logger.error("Failed to list models", { error: providersResponse.error });
+        await bot.sendTemporaryMessage("\u274C Failed to list models");
+        return;
+      }
+      const configResponse = await client.config.get();
+      let currentModel = "";
+      if (configResponse.data) {
+        const cfg = configResponse.data;
+        currentModel = cfg.model || "";
+      }
+      const providers = providersResponse.data || [];
+      const chatModels = [];
+      for (const provider of providers) {
+        if (provider.models) {
+          for (const modelKey in provider.models) {
+            const model = provider.models[modelKey];
+            if (model.status === "active" && model.capabilities?.output?.text) {
+              chatModels.push(model);
+            }
+          }
+        }
+      }
+      if (chatModels.length === 0) {
+        await bot.sendTemporaryMessage("No available models found.");
+        return;
+      }
+      const keyboard = new InlineKeyboard3();
+      chatModels.sort((a, b) => {
+        if (a.providerID !== b.providerID) {
+          return a.providerID.localeCompare(b.providerID);
+        }
+        return a.name.localeCompare(b.name);
+      });
+      chatModels.forEach((model) => {
+        const modelId = `${model.providerID}/${model.id}`;
+        const isSelected = currentModel === modelId ? "\u2705 " : "";
+        let displayName = `${model.providerID}: ${model.name}`;
+        if (displayName.length > 30) {
+          displayName = displayName.substring(0, 27) + "...";
+        }
+        keyboard.text(`${isSelected}${displayName}`, `model:${modelId}`).row();
+      });
+      const message = "*Select a model:*";
+      await bot.sendTemporaryMessage(message, 6e4, {
+        parse_mode: "Markdown",
+        reply_markup: keyboard
+      });
+    } catch (error) {
+      logger.error("Failed to list models", { error: String(error) });
+      await bot.sendTemporaryMessage("\u274C Failed to list models");
     }
   };
 }
 
 // src/commands/new.ts
-function createNewCommandHandler({
-  bot,
-  config,
-  client,
-  logger,
-  globalStateStore
-}) {
+function createNewCommandHandler(deps) {
+  const { bot, client, logger, globalStateStore } = deps;
   return async (ctx) => {
     console.log("[Bot] /new command received");
     if (ctx.chat?.type !== "private") return;
@@ -628,7 +735,9 @@ function createNewCommandHandler({
       const createSessionResponse = await client.session.create({ body: {} });
       if (createSessionResponse.error) {
         logger.error("Failed to create session", { error: createSessionResponse.error });
-        await ctx.reply("\u274C Failed to create session", getDefaultKeyboardOptions());
+        await deps.queue.enqueue(
+          () => ctx.reply("\u274C Failed to create session", getDefaultKeyboardOptions())
+        );
         return;
       }
       const sessionId = createSessionResponse.data.id;
@@ -639,13 +748,15 @@ function createNewCommandHandler({
       await bot.sendMessage(`\u2705 Session created: ${sessionId}`);
     } catch (error) {
       logger.error("Failed to create new session", { error: String(error) });
-      await ctx.reply("\u274C Failed to create session", getDefaultKeyboardOptions());
+      await deps.queue.enqueue(
+        () => ctx.reply("\u274C Failed to create session", getDefaultKeyboardOptions())
+      );
     }
   };
 }
 
 // src/commands/sessions.ts
-import { InlineKeyboard as InlineKeyboard3 } from "grammy";
+import { InlineKeyboard as InlineKeyboard4 } from "grammy";
 function getSessionInfo(session) {
   return session.properties?.info ?? session;
 }
@@ -707,7 +818,7 @@ function createSessionsCommandHandler({
       if (limit) {
         sessions = sessions.slice(0, limit);
       }
-      const keyboard = new InlineKeyboard3();
+      const keyboard = new InlineKeyboard4();
       sessions.forEach((session) => {
         const label = getSessionLabel(session);
         globalStateStore.setSessionTitle(session.id, label);
@@ -723,44 +834,43 @@ function createSessionsCommandHandler({
 }
 
 // src/commands/tab.ts
-function createTabCommandHandler({ config, client, logger, globalStateStore }) {
+function createTabCommandHandler(deps) {
+  const { config, client, logger, globalStateStore, bot } = deps;
   return async (ctx) => {
     console.log("[Bot] /tab command received");
     if (ctx.chat?.type !== "private") return;
     const userId = ctx.from?.id;
     if (!userId || !config.allowedUserIds.includes(userId)) {
       console.log(`[Bot] /tab attempt by unauthorized user ${userId}`);
-      await ctx.reply("You are not authorized to use this bot.", getDefaultKeyboardOptions());
+      await deps.queue.enqueue(
+        () => ctx.reply("You are not authorized to use this bot.", getDefaultKeyboardOptions())
+      );
       return;
     }
-    const sessionId = globalStateStore.getActiveSession();
-    if (!sessionId) {
-      await ctx.reply("\u274C No active session. Use /new to create one.", getDefaultKeyboardOptions());
-      return;
-    }
-    try {
-      const response = await client.session.prompt({
-        path: { id: sessionId },
-        body: {
-          parts: [{ type: "text", text: "	" }]
+    let agents = globalStateStore.getAgents();
+    if (agents.length === 0) {
+      try {
+        const agentsResponse = await client.app.agents();
+        if (agentsResponse.data) {
+          const allAgents = agentsResponse.data;
+          const primaryAgents = allAgents.filter((a) => a.mode === "primary" && !a.builtIn);
+          globalStateStore.setAgents(primaryAgents);
+          agents = primaryAgents;
         }
-      });
-      if (response.error) {
-        logger.error("Failed to send tab to OpenCode", {
-          error: response.error,
-          sessionId
-        });
-        await ctx.reply("\u274C Failed to send tab", getDefaultKeyboardOptions());
-        return;
+      } catch (err) {
+        logger.error("Failed to fetch agents in /tab", { error: String(err) });
       }
-      logger.debug("Sent tab to OpenCode", { sessionId });
-    } catch (error) {
-      logger.error("Failed to send tab to OpenCode", {
-        error: String(error),
-        sessionId
-      });
-      await ctx.reply("\u274C Failed to send tab", getDefaultKeyboardOptions());
     }
+    if (agents.length === 0) {
+      await bot.sendTemporaryMessage("\u274C No agents available.");
+      return;
+    }
+    const currentAgentName = globalStateStore.getCurrentAgent();
+    const currentIndex = agents.findIndex((a) => a.name === currentAgentName);
+    const nextIndex = (currentIndex + 1) % agents.length;
+    const nextAgent = agents[nextIndex];
+    globalStateStore.setCurrentAgent(nextAgent.name);
+    await bot.sendTemporaryMessage(`\u{1F504} Active agent: ${nextAgent.name}`);
   };
 }
 
@@ -799,7 +909,7 @@ ${lines.join("\n")}`;
   };
 }
 
-// src/lib/telegram-queue.ts
+// src/services/telegram-queue.service.ts
 var TelegramQueue = class {
   queue = [];
   processing = false;
@@ -941,6 +1051,7 @@ function createTelegramBot(config, client, logger, globalStateStore, questionTra
   bot.command("deletesessions", createDeleteSessionsCommandHandler(commandDeps));
   bot.command("sessions", createSessionsCommandHandler(commandDeps));
   bot.command("agents", createAgentsCommandHandler(commandDeps));
+  bot.command("models", createModelsCommandHandler(commandDeps));
   bot.command("help", createHelpCommandHandler(commandDeps));
   bot.command("tab", createTabCommandHandler(commandDeps));
   bot.command("esc", createEscCommandHandler(commandDeps));
@@ -950,6 +1061,7 @@ function createTelegramBot(config, client, logger, globalStateStore, questionTra
   bot.on("message:audio", createAudioMessageHandler(commandDeps));
   bot.callbackQuery(/^(session:|q:)/, createQuestionCallbackHandler(commandDeps));
   bot.callbackQuery(/^agent:/, createAgentsCallbackHandler(commandDeps));
+  bot.callbackQuery(/^model:/, createModelsCallbackHandler(commandDeps));
   bot.catch((error) => {
     console.error("[Bot] Bot error caught:", error);
     logger.error("Bot error", { error: String(error) });
@@ -1001,9 +1113,7 @@ function createBotManager(bot, queue, globalStateStore, logger) {
         ...options,
         reply_markup: options?.reply_markup || createDefaultKeyboard()
       };
-      const result = await queue.enqueue(
-        () => bot.api.sendMessage(chatId, text, mergedOptions)
-      );
+      const result = await queue.enqueue(() => bot.api.sendMessage(chatId, text, mergedOptions));
       return { message_id: result.message_id };
     },
     async editMessage(messageId, text) {
@@ -1093,7 +1203,10 @@ async function handleMessagePartUpdated(event, context) {
         try {
           context.globalStateStore.setLastUpdate(part.sessionID, text);
           context.globalStateStore.setLastUpdateDelta(part.sessionID, event.properties.delta);
-          logger.info("Stored lastUpdate and lastUpdateDelta", { sessionID: part.sessionID, delta: event.properties.delta });
+          logger.info("Stored lastUpdate and lastUpdateDelta", {
+            sessionID: part.sessionID,
+            delta: event.properties.delta
+          });
         } catch (err) {
           logger.warn("Failed to store last update data", { error: String(err) });
         }
@@ -1132,7 +1245,7 @@ async function handleMessageUpdated(event, context) {
 }
 
 // src/events/question-asked.ts
-import { InlineKeyboard as InlineKeyboard4 } from "grammy";
+import { InlineKeyboard as InlineKeyboard5 } from "grammy";
 async function handleQuestionAsked(event, context) {
   const { id: questionId, sessionID, questions } = event.properties;
   console.log(`[TelegramRemote] Question asked: ${questionId} (${questions.length} questions)`);
@@ -1147,7 +1260,7 @@ async function sendQuestion(context, questionId, index) {
   const question = session.questions[index];
   const isMultiple = question.multiple ?? false;
   const currentAnswers = session.answers[index] || [];
-  const keyboard = new InlineKeyboard4();
+  const keyboard = new InlineKeyboard5();
   question.options.forEach((option, optionIndex) => {
     const isSelected = currentAnswers.includes(option.label);
     const icon = isMultiple ? isSelected ? "\u2611 " : "\u2610 " : "";
@@ -1448,6 +1561,7 @@ var StepUpdateService = class {
     }, this.intervalMs);
     this.sessions.set(sessionId, {
       intervalId,
+      isSending: false,
       finalSent: false
     });
     void this.sendUpdate(sessionId, false);
@@ -1505,14 +1619,18 @@ var StepUpdateService = class {
     if (state.finalSent && !isFinal) {
       return state.messageId;
     }
-    if (state.lastSentText === text && !isFinal) {
+    if (state.lastSentText === text) {
+      if (isFinal) {
+        state.finalSent = true;
+      }
       return state.messageId;
     }
-    if (isFinal && state.lastSentText === text && state.messageId) {
-      state.finalSent = true;
+    if (state.isSending && state.inFlightText === text) {
       return state.messageId;
     }
     try {
+      state.isSending = true;
+      state.inFlightText = text;
       if (state.messageId) {
         await this.bot.editMessage(state.messageId, text);
       } else {
@@ -1530,6 +1648,11 @@ var StepUpdateService = class {
         sessionId,
         isFinal
       });
+    } finally {
+      state.isSending = false;
+      if (state.inFlightText === text) {
+        state.inFlightText = void 0;
+      }
     }
     return state.messageId;
   }

@@ -2,12 +2,8 @@ import type { Context } from "grammy";
 import { getDefaultKeyboardOptions } from "../lib/utils.js";
 import type { CommandDeps } from "./types.js";
 
-export function createMessageTextHandler({
-  config,
-  client,
-  logger,
-  globalStateStore,
-}: CommandDeps) {
+export function createMessageTextHandler(deps: CommandDeps) {
+  const { config, client, logger, globalStateStore } = deps;
   return async (ctx: Context) => {
     console.log(`[Bot] Text message received: "${ctx.message?.text?.slice(0, 50)}..."`);
     if (ctx.chat?.type !== "private") return;
@@ -20,7 +16,9 @@ export function createMessageTextHandler({
         const createSessionResponse = await client.session.create({ body: {} });
         if (createSessionResponse.error) {
           logger.error("Failed to create session", { error: createSessionResponse.error });
-          await ctx.reply("❌ Failed to initialize session", getDefaultKeyboardOptions());
+          await deps.queue.enqueue(() =>
+            ctx.reply("❌ Failed to initialize session", getDefaultKeyboardOptions()),
+          );
           return;
         }
 
@@ -32,7 +30,9 @@ export function createMessageTextHandler({
         });
       } catch (error) {
         logger.error("Failed to create session", { error: String(error) });
-        await ctx.reply("❌ Failed to initialize session", getDefaultKeyboardOptions());
+        await deps.queue.enqueue(() =>
+          ctx.reply("❌ Failed to initialize session", getDefaultKeyboardOptions()),
+        );
         return;
       }
     }
@@ -54,7 +54,9 @@ export function createMessageTextHandler({
           error: response.error,
           sessionId,
         });
-        await ctx.reply("❌ Failed to process message", getDefaultKeyboardOptions());
+        await deps.queue.enqueue(() =>
+          ctx.reply("❌ Failed to process message", getDefaultKeyboardOptions()),
+        );
         return;
       }
 
@@ -66,7 +68,9 @@ export function createMessageTextHandler({
         error: String(error),
         sessionId,
       });
-      await ctx.reply("❌ Failed to process message", getDefaultKeyboardOptions());
+      await deps.queue.enqueue(() =>
+        ctx.reply("❌ Failed to process message", getDefaultKeyboardOptions()),
+      );
     }
   };
 }

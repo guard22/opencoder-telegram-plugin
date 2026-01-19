@@ -2,13 +2,8 @@ import type { Context } from "grammy";
 import { getDefaultKeyboardOptions } from "../lib/utils.js";
 import type { CommandDeps } from "./types.js";
 
-export function createTabCommandHandler({
-  config,
-  client,
-  logger,
-  globalStateStore,
-  bot,
-}: CommandDeps) {
+export function createTabCommandHandler(deps: CommandDeps) {
+  const { config, client, logger, globalStateStore, bot } = deps;
   return async (ctx: Context) => {
     console.log("[Bot] /tab command received");
     if (ctx.chat?.type !== "private") return;
@@ -17,7 +12,9 @@ export function createTabCommandHandler({
     const userId = ctx.from?.id;
     if (!userId || !config.allowedUserIds.includes(userId)) {
       console.log(`[Bot] /tab attempt by unauthorized user ${userId}`);
-      await ctx.reply("You are not authorized to use this bot.", getDefaultKeyboardOptions());
+      await deps.queue.enqueue(() =>
+        ctx.reply("You are not authorized to use this bot.", getDefaultKeyboardOptions()),
+      );
       return;
     }
 
