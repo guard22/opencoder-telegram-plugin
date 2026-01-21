@@ -1,6 +1,6 @@
-import { type Context } from "grammy";
-import type { CommandDeps } from "./types.js";
 import type { Project } from "@opencode-ai/sdk";
+import type { Context } from "grammy";
+import type { CommandDeps } from "./types.js";
 
 export function createProjectsCommandHandler({ client, logger, bot }: CommandDeps) {
   return async (ctx: Context) => {

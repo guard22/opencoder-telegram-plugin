@@ -2,7 +2,7 @@ import { mkdir, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { Context } from "grammy";
-import { transcribeAudio } from "../lib/audio-transcription.js";
+import { transcribeAudio } from "../services/audio-transcription.service.js";
 import type { CommandDeps } from "./types.js";
 
 const SUPPORTED_FORMATS = [

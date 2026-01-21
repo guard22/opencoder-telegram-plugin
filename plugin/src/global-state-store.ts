@@ -34,8 +34,8 @@ export class GlobalStateStore {
   private activeChatId: number | null = null;
   private sessionTitles: Map<string, string> = new Map();
 
-  constructor(allowedEventTypes: string[]) {
-    this.allowedEventTypes = new Set(allowedEventTypes);
+  constructor(config: { allowedEventTypes: string[] }) {
+    this.allowedEventTypes = new Set(config.allowedEventTypes);
   }
 
   // Session tracking methods

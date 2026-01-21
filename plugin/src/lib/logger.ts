@@ -1,4 +1,4 @@
-import { SERVICE_NAME } from "./config";
+import { SERVICE_NAME } from "../config.js";
 import type { OpencodeClient } from "./types";
 
 type LogLevel = "debug" | "info" | "warn" | "error";

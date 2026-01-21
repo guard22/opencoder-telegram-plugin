@@ -2,9 +2,6 @@
  * OpenCoder Telegram Remote Plugin
  * https://github.com/YOUR_USERNAME/opencoder-telegram-remote-plugin
  */
-import {
-  loadConfig
-} from "./chunk-B3VKDYYM.js";
 
 // src/bot.ts
 import { Bot, InputFile } from "grammy";
@@ -65,149 +62,12 @@ var createModelsCallbackHandler = (deps) => async (ctx) => {
   }
 };
 
-// src/commands/question-callback.command.ts
-import { InlineKeyboard } from "grammy";
-var createQuestionCallbackHandler = (deps) => async (ctx) => {
-  if (!ctx.callbackQuery || !ctx.callbackQuery.data) return;
-  if (ctx.chat?.type !== "private") return;
-  const data = ctx.callbackQuery.data;
-  if (data.startsWith("session:")) {
-    const sessionId = data.replace("session:", "").trim();
-    if (!sessionId) return;
-    deps.globalStateStore.setActiveSession(sessionId);
-    const sessionTitle = deps.globalStateStore.getSessionTitle(sessionId);
-    const label = sessionTitle ?? sessionId;
-    await ctx.answerCallbackQuery({ text: `Active session set: ${label}` });
-    await deps.bot.sendTemporaryMessage(`\u2705 Active session set: ${label}`, 3e3);
-    return;
-  }
-  if (!data.startsWith("q:")) return;
-  const parts = data.split(":");
-  if (parts.length !== 4) return;
-  const [_, questionId, questionIndexStr, action] = parts;
-  const questionIndex = parseInt(questionIndexStr, 10);
-  const session = deps.questionTracker.getActiveQuestionSession(questionId);
-  if (!session) {
-    await ctx.answerCallbackQuery({ text: "Question session expired or invalid." });
-    return;
-  }
-  const question = session.questions[questionIndex];
-  if (!question) return;
-  let currentAnswers = session.answers[questionIndex] || [];
-  if (action === "done") {
-    if (currentAnswers.length === 0) {
-      await ctx.answerCallbackQuery({ text: "Please select at least one option." });
-      return;
-    }
-    await proceedToNext(ctx, deps, questionId, questionIndex);
-  } else {
-    const optionIndex = parseInt(action, 10);
-    const option = question.options[optionIndex];
-    if (!option) return;
-    if (question.multiple) {
-      if (currentAnswers.includes(option.label)) {
-        currentAnswers = currentAnswers.filter((a) => a !== option.label);
-      } else {
-        currentAnswers.push(option.label);
-      }
-    } else {
-      currentAnswers = [option.label];
-    }
-    deps.questionTracker.recordAnswer(questionId, questionIndex, currentAnswers);
-    if (!question.multiple) {
-      await ctx.answerCallbackQuery();
-      await proceedToNext(ctx, deps, questionId, questionIndex);
-    } else {
-      const keyboard = new InlineKeyboard();
-      question.options.forEach((opt, idx) => {
-        const isSelected = currentAnswers.includes(opt.label);
-        const icon = isSelected ? "\u2611 " : "\u2610 ";
-        keyboard.text(`${icon}${opt.label}`, `q:${questionId}:${questionIndex}:${idx}`).row();
-      });
-      keyboard.text("Done", `q:${questionId}:${questionIndex}:done`);
-      try {
-        await ctx.editMessageReplyMarkup({ reply_markup: keyboard });
-      } catch (error) {
-      }
-      await ctx.answerCallbackQuery();
-    }
-  }
-};
-async function proceedToNext(ctx, deps, questionId, currentIndex) {
-  const session = deps.questionTracker.getActiveQuestionSession(questionId);
-  if (!session) return;
-  const question = session.questions[currentIndex];
-  const answers = session.answers[currentIndex] || [];
-  try {
-    await ctx.editMessageText(
-      `\u2753 *${question.header}*
-
-${question.question}
-
-\u2705 *Answered*: ${answers.join(", ")}`,
-      { parse_mode: "Markdown" }
-    );
-  } catch (e) {
-    console.error("Failed to edit question message:", e);
-  }
-  const nextIndex = currentIndex + 1;
-  if (nextIndex < session.questions.length) {
-    const nextQuestion = session.questions[nextIndex];
-    const isMultiple = nextQuestion.multiple ?? false;
-    const keyboard = new InlineKeyboard();
-    nextQuestion.options.forEach((option, optionIndex) => {
-      const icon = isMultiple ? "\u2610 " : "";
-      keyboard.text(`${icon}${option.label}`, `q:${questionId}:${nextIndex}:${optionIndex}`).row();
-    });
-    if (isMultiple) {
-      keyboard.text("Done", `q:${questionId}:${nextIndex}:done`);
-    }
-    const messageText = `\u2753 *${nextQuestion.header}*
-
-${nextQuestion.question}
-
-${nextQuestion.options.map((o) => `\u2022 *${o.label}*: ${o.description}`).join("\n")}`;
-    const chatId = ctx.chat?.id;
-    if (!chatId) {
-      return;
-    }
-    const result = await deps.queue.enqueue(
-      () => ctx.api.sendMessage(chatId, messageText, {
-        parse_mode: "Markdown",
-        reply_markup: keyboard
-      })
-    );
-    session.telegramMessageIds.push(result.message_id);
-    session.currentQuestionIndex = nextIndex;
-    deps.questionTracker.updateQuestionSession(questionId, session);
-  } else {
-    try {
-      await deps.client.tui.control.response({
-        body: {
-          type: "question.replied",
-          properties: {
-            sessionID: session.sessionId,
-            requestID: questionId,
-            answers: session.answers
-          }
-        }
-      });
-      await deps.bot.sendTemporaryMessage("\u2705 Answers submitted successfully!", 3e3);
-    } catch (error) {
-      console.error("Failed to submit answers:", error);
-      await deps.bot.sendMessage(`\u274C Failed to submit answers: ${error}`);
-    } finally {
-      deps.questionTracker.clearQuestionSession(questionId);
-    }
-  }
-}
-
 // src/commands/audio-message.command.ts
 import { mkdir, writeFile } from "fs/promises";
 import { tmpdir } from "os";
 import { join } from "path";
 
-// src/lib/audio-transcription.ts
+// src/services/audio-transcription.service.ts
 import { readFile, unlink } from "fs/promises";
 import { createOpenAI } from "@ai-sdk/openai";
 import { createPartFromUri, createUserContent, GoogleGenAI } from "@google/genai";
@@ -388,7 +248,7 @@ function createAudioMessageHandler(deps) {
 }
 
 // src/commands/agents.ts
-import { InlineKeyboard as InlineKeyboard2 } from "grammy";
+import { InlineKeyboard } from "grammy";
 function createAgentsCommandHandler({
   config,
   client,
@@ -422,7 +282,7 @@ function createAgentsCommandHandler({
         await bot.sendTemporaryMessage("No primary agents found.");
         return;
       }
-      const keyboard = new InlineKeyboard2();
+      const keyboard = new InlineKeyboard();
       primaryAgents.forEach((agent) => {
         const isSelected = agent.name === defaultAgent ? "\u2705 " : "";
         keyboard.text(`${isSelected}${agent.name}`, `agent:${agent.name}`).row();
@@ -663,7 +523,7 @@ function createMessageTextHandler(deps) {
 }
 
 // src/commands/models.ts
-import { InlineKeyboard as InlineKeyboard3 } from "grammy";
+import { InlineKeyboard as InlineKeyboard2 } from "grammy";
 function createModelsCommandHandler({ client, logger, bot, globalStateStore }) {
   return async (ctx) => {
     console.log("[Bot] /models command received");
@@ -697,7 +557,7 @@ function createModelsCommandHandler({ client, logger, bot, globalStateStore }) {
         await bot.sendTemporaryMessage("No available models found.");
         return;
       }
-      const keyboard = new InlineKeyboard3();
+      const keyboard = new InlineKeyboard2();
       chatModels.sort((a, b) => {
         if (a.providerID !== b.providerID) {
           return a.providerID.localeCompare(b.providerID);
@@ -790,7 +650,7 @@ ${message}`, {
 }
 
 // src/commands/sessions.ts
-import { InlineKeyboard as InlineKeyboard4 } from "grammy";
+import { InlineKeyboard as InlineKeyboard3 } from "grammy";
 function getSessionInfo(session) {
   return session.properties?.info ?? session;
 }
@@ -852,7 +712,7 @@ function createSessionsCommandHandler({
       if (limit) {
         sessions = sessions.slice(0, limit);
       }
-      const keyboard = new InlineKeyboard4();
+      const keyboard = new InlineKeyboard3();
       sessions.forEach((session) => {
         const label = getSessionLabel(session);
         globalStateStore.setSessionTitle(session.id, label);
@@ -958,11 +818,11 @@ var TelegramQueue = class {
    * @returns Promise that resolves when the call completes
    */
   enqueue(fn) {
-    return new Promise((resolve, reject) => {
+    return new Promise((resolve2, reject) => {
       this.queue.push(async () => {
         try {
           const result = await fn();
-          resolve(result);
+          resolve2(result);
         } catch (error) {
           reject(error);
         }
@@ -1040,7 +900,7 @@ function isUserAllowed(ctx, allowedUserIds) {
   if (!userId) return false;
   return allowedUserIds.includes(userId);
 }
-function createTelegramBot(config, client, logger, globalStateStore, questionTracker) {
+function createTelegramBot(config, client, logger, globalStateStore) {
   console.log("[Bot] createTelegramBot called");
   const queue = new TelegramQueue(500);
   if (botInstance) {
@@ -1078,8 +938,7 @@ function createTelegramBot(config, client, logger, globalStateStore, questionTra
     client,
     logger,
     globalStateStore,
-    queue,
-    questionTracker
+    queue
   };
   bot.command("new", createNewCommandHandler(commandDeps));
   bot.command("projects", createProjectsCommandHandler(commandDeps));
@@ -1094,7 +953,6 @@ function createTelegramBot(config, client, logger, globalStateStore, questionTra
   bot.on("message:text", createMessageTextHandler(commandDeps));
   bot.on("message:voice", createAudioMessageHandler(commandDeps));
   bot.on("message:audio", createAudioMessageHandler(commandDeps));
-  bot.callbackQuery(/^(session:|q:)/, createQuestionCallbackHandler(commandDeps));
   bot.callbackQuery(/^agent:/, createAgentsCallbackHandler(commandDeps));
   bot.callbackQuery(/^model:/, createModelsCallbackHandler(commandDeps));
   bot.catch((error) => {
@@ -1182,8 +1040,61 @@ function createBotManager(bot, queue, globalStateStore, logger) {
   };
 }
 
-// src/lib/config.ts
+// src/config.ts
+import { resolve } from "path";
+import { config as loadEnv } from "dotenv";
+loadEnv({ path: resolve(process.cwd(), ".env") });
 var SERVICE_NAME = "TelegramRemote";
+function parseAllowedUserIds(value) {
+  if (!value || value.trim() === "") {
+    return [];
+  }
+  return value.split(",").map((id) => id.trim()).filter((id) => id !== "").map((id) => Number.parseInt(id, 10)).filter((id) => !Number.isNaN(id));
+}
+function loadConfig() {
+  console.log("[Config] Loading environment configuration...");
+  const botToken = process.env.TELEGRAM_BOT_TOKEN;
+  const allowedUserIdsStr = process.env.TELEGRAM_ALLOWED_USER_IDS;
+  if (!botToken || botToken.trim() === "") {
+    console.error("[Config] Missing TELEGRAM_BOT_TOKEN");
+    throw new Error("Missing required environment variable: TELEGRAM_BOT_TOKEN");
+  }
+  const allowedUserIds = parseAllowedUserIds(allowedUserIdsStr);
+  if (allowedUserIds.length === 0) {
+    console.error("[Config] Missing or invalid TELEGRAM_ALLOWED_USER_IDS");
+    throw new Error(
+      "Missing or invalid TELEGRAM_ALLOWED_USER_IDS (must be comma-separated numeric user IDs)"
+    );
+  }
+  const audioApiKey = process.env.AUDIO_TRANSCRIPTION_API_KEY || process.env.OPENAI_API_KEY || process.env.GOOGLE_GEMINI_API_KEY;
+  let audioProvider = null;
+  if (audioApiKey) {
+    audioProvider = audioApiKey.startsWith("sk-") ? "openai" : "gemini";
+    console.log(`[Config] Audio transcription enabled with ${audioProvider}`);
+  } else {
+    console.log("[Config] Audio transcription disabled (no API key)");
+  }
+  const finalMessageLineLimitEnv = process.env.TELEGRAM_FINAL_MESSAGE_LINE_LIMIT;
+  let finalMessageLineLimit = 100;
+  if (finalMessageLineLimitEnv && finalMessageLineLimitEnv.trim() !== "") {
+    const parsed = Number.parseInt(finalMessageLineLimitEnv, 10);
+    if (!Number.isNaN(parsed) && parsed > 0) {
+      finalMessageLineLimit = parsed;
+    } else {
+      console.warn("[Config] Invalid TELEGRAM_FINAL_MESSAGE_LINE_LIMIT, using default 100");
+    }
+  }
+  console.log(
+    `[Config] Configuration loaded: allowedUsers=${allowedUserIds.length}, finalMessageLineLimit=${finalMessageLineLimit}`
+  );
+  return {
+    botToken,
+    allowedUserIds,
+    finalMessageLineLimit,
+    audioTranscriptionApiKey: audioApiKey,
+    audioTranscriptionProvider: audioProvider
+  };
+}
 
 // src/lib/logger.ts
 function log(client, level, message, extra) {
@@ -1214,22 +1125,6 @@ async function handleMessagePartUpdated(event, context) {
     logger.warn("Message part update missing type");
     return;
   }
-  if (part.type === "step-start") {
-    if (part.sessionID) {
-      context.stepUpdateService.start(part.sessionID);
-    } else {
-      logger.warn("step-start received without sessionID");
-    }
-    return;
-  }
-  if (part.type === "step-finish") {
-    if (part.sessionID) {
-      await context.stepUpdateService.finish(part.sessionID);
-    } else {
-      logger.warn("step-finish received without sessionID");
-    }
-    return;
-  }
   if (part.type === "text") {
     const text = part.text;
     context.globalStateStore.setLastMessagePartUpdate(text);
@@ -1251,10 +1146,8 @@ async function handleMessagePartUpdated(event, context) {
     }
     if (part.time && typeof part.time.end !== "undefined" && part.time.end !== null) {
       try {
-        const { loadConfig: loadConfig2 } = await import("./config-FBYHFLNL.js");
-        const cfg = loadConfig2();
         const lineCount = text.split(/\r?\n/).length;
-        if (lineCount > cfg.finalMessageLineLimit) {
+        if (lineCount > context.config.finalMessageLineLimit) {
           await context.bot.sendDocument(text, "response.md");
         } else {
           await context.bot.sendMessage(text);
@@ -1277,46 +1170,6 @@ async function handleMessagePartUpdated(event, context) {
 
 // src/events/message-updated.ts
 async function handleMessageUpdated(event, context) {
-}
-
-// src/events/question-asked.ts
-import { InlineKeyboard as InlineKeyboard5 } from "grammy";
-async function handleQuestionAsked(event, context) {
-  const { id: questionId, sessionID, questions } = event.properties;
-  console.log(`[TelegramRemote] Question asked: ${questionId} (${questions.length} questions)`);
-  context.questionTracker.createQuestionSession(questionId, sessionID, questions);
-  await sendQuestion(context, questionId, 0);
-}
-async function sendQuestion(context, questionId, index) {
-  const session = context.questionTracker.getActiveQuestionSession(questionId);
-  if (!session || index >= session.questions.length) {
-    return;
-  }
-  const question = session.questions[index];
-  const isMultiple = question.multiple ?? false;
-  const currentAnswers = session.answers[index] || [];
-  const keyboard = new InlineKeyboard5();
-  question.options.forEach((option, optionIndex) => {
-    const isSelected = currentAnswers.includes(option.label);
-    const icon = isMultiple ? isSelected ? "\u2611 " : "\u2610 " : "";
-    keyboard.text(`${icon}${option.label}`, `q:${questionId}:${index}:${optionIndex}`).row();
-  });
-  if (isMultiple) {
-    keyboard.text("Done", `q:${questionId}:${index}:done`);
-  }
-  const messageText = `\u2753 *${question.header}*
-
-${question.question}
-
-${question.options.map((o) => `\u2022 *${o.label}*: ${o.description}`).join("\n")}`;
-  const result = await context.bot.sendMessage(messageText, {
-    parse_mode: "Markdown",
-    reply_markup: keyboard
-  });
-  if (session) {
-    session.telegramMessageIds.push(result.message_id);
-    context.questionTracker.updateQuestionSession(questionId, session);
-  }
 }
 
 // src/events/session-created.ts
@@ -1412,8 +1265,8 @@ var GlobalStateStore = class {
   activeSessionId = null;
   activeChatId = null;
   sessionTitles = /* @__PURE__ */ new Map();
-  constructor(allowedEventTypes) {
-    this.allowedEventTypes = new Set(allowedEventTypes);
+  constructor(config) {
+    this.allowedEventTypes = new Set(config.allowedEventTypes);
   }
   // Session tracking methods
   setActiveSession(sessionId) {
@@ -1539,167 +1392,6 @@ var GlobalStateStore = class {
   }
 };
 
-// src/question-tracker.ts
-var QuestionTracker = class {
-  sessions = /* @__PURE__ */ new Map();
-  createQuestionSession(questionId, sessionId, questions) {
-    const sessionState = {
-      questionId,
-      sessionId,
-      questions,
-      currentQuestionIndex: 0,
-      answers: [],
-      telegramMessageIds: [],
-      createdAt: /* @__PURE__ */ new Date()
-    };
-    this.sessions.set(questionId, sessionState);
-  }
-  getActiveQuestionSession(questionId) {
-    return this.sessions.get(questionId);
-  }
-  updateQuestionSession(questionId, state) {
-    this.sessions.set(questionId, state);
-  }
-  clearQuestionSession(questionId) {
-    this.sessions.delete(questionId);
-  }
-  recordAnswer(questionId, questionIndex, answer) {
-    const session = this.sessions.get(questionId);
-    if (session) {
-      while (session.answers.length <= questionIndex) {
-        session.answers.push([]);
-      }
-      session.answers[questionIndex] = answer;
-      this.updateQuestionSession(questionId, session);
-    }
-  }
-  getCurrentQuestionIndex(questionId) {
-    return this.sessions.get(questionId)?.currentQuestionIndex;
-  }
-};
-
-// src/services/step-update-service.ts
-var StepUpdateService = class {
-  constructor(bot, globalStateStore, logger, intervalMs) {
-    this.bot = bot;
-    this.globalStateStore = globalStateStore;
-    this.logger = logger;
-    this.intervalMs = intervalMs;
-  }
-  sessions = /* @__PURE__ */ new Map();
-  start(sessionId) {
-    if (!sessionId || this.sessions.has(sessionId)) {
-      return;
-    }
-    const intervalId = setInterval(() => {
-      void this.sendUpdate(sessionId, false);
-    }, this.intervalMs);
-    this.sessions.set(sessionId, {
-      intervalId,
-      isSending: false,
-      finalSent: false,
-      sendingPromise: Promise.resolve()
-    });
-    void this.sendUpdate(sessionId, false);
-  }
-  async finish(sessionId) {
-    if (!sessionId) {
-      return;
-    }
-    const state = this.sessions.get(sessionId);
-    if (state) {
-      clearInterval(state.intervalId);
-    }
-    const messageId = await this.sendUpdate(sessionId, true);
-    if (state) {
-      this.sessions.delete(sessionId);
-    }
-    if (messageId) {
-      setTimeout(() => {
-        void this.bot.deleteMessage(messageId).catch((error) => {
-          this.logger.warn("Failed to delete step update message", {
-            error: String(error),
-            sessionId,
-            messageId
-          });
-        });
-      }, 2e3);
-    }
-  }
-  async sendUpdate(sessionId, isFinal) {
-    const state = this.sessions.get(sessionId);
-    if (state) {
-      const nextUpdate = state.sendingPromise.then(async () => {
-        return await this.performUpdate(sessionId, isFinal, state);
-      });
-      state.sendingPromise = nextUpdate.then(() => {
-      }).catch(() => {
-      });
-      return nextUpdate;
-    }
-    return await this.performUpdate(sessionId, isFinal, void 0);
-  }
-  async performUpdate(sessionId, isFinal, state) {
-    const text = this.globalStateStore.getLastUpdate(sessionId);
-    if (!text || text.trim() === "") {
-      if (isFinal && state) {
-        state.finalSent = true;
-      }
-      return void 0;
-    }
-    if (!state) {
-      if (isFinal) {
-        try {
-          const result = await this.bot.sendMessage(text);
-          return result.message_id;
-        } catch (error) {
-          this.logger.warn("Failed to send final step update", {
-            error: String(error),
-            sessionId
-          });
-        }
-      }
-      return void 0;
-    }
-    if (state.finalSent && !isFinal) {
-      return state.messageId;
-    }
-    if (state.lastSentText === text) {
-      if (isFinal) {
-        state.finalSent = true;
-      }
-      return state.messageId;
-    }
-    try {
-      state.isSending = true;
-      state.inFlightText = text;
-      if (state.messageId) {
-        await this.bot.editMessage(state.messageId, text);
-      } else {
-        const result = await this.bot.sendMessage(text);
-        state.messageId = result.message_id;
-      }
-      state.lastSentText = text;
-      if (isFinal) {
-        state.finalSent = true;
-      }
-      return state.messageId;
-    } catch (error) {
-      this.logger.warn("Failed to send step update", {
-        error: String(error),
-        sessionId,
-        isFinal
-      });
-    } finally {
-      state.isSending = false;
-      if (state.inFlightText === text) {
-        state.inFlightText = void 0;
-      }
-    }
-    return state.messageId;
-  }
-};
-
 // src/telegram-remote.ts
 var TelegramRemote = async ({ client }) => {
   console.log("[TelegramRemote] Plugin initialization started");
@@ -1717,25 +1409,20 @@ var TelegramRemote = async ({ client }) => {
       }
     };
   }
-  console.log("[TelegramRemote] Creating global state store and question tracker...");
-  const questionTracker = new QuestionTracker();
-  const globalStateStore = new GlobalStateStore([
-    "file.edited",
-    "session.updated",
-    "session.status",
-    "message.part.updated",
-    "message.updated",
-    "todo.updated"
-  ]);
+  console.log("[TelegramRemote] Creating global state store...");
+  const globalStateStore = new GlobalStateStore({
+    allowedEventTypes: [
+      "file.edited",
+      "session.updated",
+      "session.status",
+      "message.part.updated",
+      "message.updated",
+      "todo.updated"
+    ]
+  });
   console.log("[TelegramRemote] Creating Telegram bot...");
-  const bot = createTelegramBot(config, client, logger, globalStateStore, questionTracker);
+  const bot = createTelegramBot(config, client, logger, globalStateStore);
   console.log("[TelegramRemote] Bot created successfully");
-  const stepUpdateService = new StepUpdateService(
-    bot,
-    globalStateStore,
-    logger,
-    config.stepUpdateIntervalMs
-  );
   console.log("[TelegramRemote] Starting Telegram bot polling...");
   bot.start().catch((error) => {
     console.error("[TelegramRemote] Failed to start bot:", error);
@@ -1779,8 +1466,7 @@ var TelegramRemote = async ({ client }) => {
     client,
     bot,
     globalStateStore,
-    questionTracker,
-    stepUpdateService
+    config
   };
   const eventHandlers = {
     "session.created": handleSessionCreated,
@@ -1788,7 +1474,6 @@ var TelegramRemote = async ({ client }) => {
     "message.part.updated": handleMessagePartUpdated,
     "session.updated": handleSessionUpdated,
     "session.status": handleSessionStatus,
-    "question.asked": handleQuestionAsked,
     "todo.updated": handleTodoUpdated
   };
   return {

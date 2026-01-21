@@ -2,7 +2,6 @@ import { Bot, type Context, InputFile, Keyboard } from "grammy";
 import {
   createAgentsCallbackHandler,
   createModelsCallbackHandler,
-  createQuestionCallbackHandler,
 } from "./callbacks/index.js";
 import { createAudioMessageHandler } from "./commands/audio-message.command.js";
 import {
@@ -24,7 +23,6 @@ import { createDefaultKeyboard } from "./lib/keyboard.js";
 import type { Logger } from "./lib/logger.js";
 import type { OpencodeClient } from "./lib/types.js";
 import { sendTemporaryMessage } from "./lib/utils.js";
-import type { QuestionTracker } from "./question-tracker.js";
 import { TelegramQueue } from "./services/telegram-queue.service.js";
 
 export interface TelegramBotManager {
@@ -51,7 +49,6 @@ export function createTelegramBot(
   client: OpencodeClient,
   logger: Logger,
   globalStateStore: GlobalStateStore,
-  questionTracker: QuestionTracker,
 ): TelegramBotManager {
   console.log("[Bot] createTelegramBot called");
 
@@ -100,7 +97,6 @@ export function createTelegramBot(
     logger,
     globalStateStore,
     queue,
-    questionTracker,
   };
 
   bot.command("new", createNewCommandHandler(commandDeps));
@@ -118,10 +114,7 @@ export function createTelegramBot(
   bot.on("message:voice", createAudioMessageHandler(commandDeps));
   bot.on("message:audio", createAudioMessageHandler(commandDeps));
 
-  // Register callback query handler for questions
-  // We use regex to route specific callback data to the correct handler
-  // This prevents one handler from blocking the other since they don't call next()
-  bot.callbackQuery(/^(session:|q:)/, createQuestionCallbackHandler(commandDeps));
+  // Register callback query handlers
   bot.callbackQuery(/^agent:/, createAgentsCallbackHandler(commandDeps));
   bot.callbackQuery(/^model:/, createModelsCallbackHandler(commandDeps));
 

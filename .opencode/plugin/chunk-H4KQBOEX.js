@@ -46,24 +46,13 @@ function loadConfig() {
       console.warn("[Config] Invalid TELEGRAM_FINAL_MESSAGE_LINE_LIMIT, using default 100");
     }
   }
-  const stepUpdateIntervalEnv = process.env.TELEGRAM_STEP_UPDATE_INTERVAL_MS;
-  let stepUpdateIntervalMs = 500;
-  if (stepUpdateIntervalEnv && stepUpdateIntervalEnv.trim() !== "") {
-    const parsed = Number.parseInt(stepUpdateIntervalEnv, 10);
-    if (!Number.isNaN(parsed) && parsed > 0) {
-      stepUpdateIntervalMs = parsed;
-    } else {
-      console.warn("[Config] Invalid TELEGRAM_STEP_UPDATE_INTERVAL_MS, using default 500");
-    }
-  }
   console.log(
-    `[Config] Configuration loaded: allowedUsers=${allowedUserIds.length}, finalMessageLineLimit=${finalMessageLineLimit}, stepUpdateIntervalMs=${stepUpdateIntervalMs}`
+    `[Config] Configuration loaded: allowedUsers=${allowedUserIds.length}, finalMessageLineLimit=${finalMessageLineLimit}`
   );
   return {
     botToken,
     allowedUserIds,
     finalMessageLineLimit,
-    stepUpdateIntervalMs,
     audioTranscriptionApiKey: audioApiKey,
     audioTranscriptionProvider: audioProvider
   };

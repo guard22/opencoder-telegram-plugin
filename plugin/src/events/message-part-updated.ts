@@ -13,24 +13,6 @@ export async function handleMessagePartUpdated(
     return;
   }
 
-  if (part.type === "step-start") {
-    if (part.sessionID) {
-      context.stepUpdateService.start(part.sessionID);
-    } else {
-      logger.warn("step-start received without sessionID");
-    }
-    return;
-  }
-
-  if (part.type === "step-finish") {
-    if (part.sessionID) {
-      await context.stepUpdateService.finish(part.sessionID);
-    } else {
-      logger.warn("step-finish received without sessionID");
-    }
-    return;
-  }
-
   if (part.type === "text") {
     const text = part.text;
     context.globalStateStore.setLastMessagePartUpdate(text);
@@ -57,11 +39,9 @@ export async function handleMessagePartUpdated(
     if (part.time && typeof part.time.end !== "undefined" && part.time.end !== null) {
       try {
         // Use central config to decide whether to send as message or markdown file
-        const { loadConfig } = await import("../config.js");
-        const cfg = loadConfig();
         const lineCount = text.split(/\r?\n/).length;
 
-        if (lineCount > cfg.finalMessageLineLimit) {
+        if (lineCount > context.config.finalMessageLineLimit) {
           await context.bot.sendDocument(text, "response.md");
         } else {
           await context.bot.sendMessage(text);

@@ -3,13 +3,13 @@ import { config as loadEnv } from "dotenv";
 
 loadEnv({ path: resolve(process.cwd(), ".env") });
 
+export const SERVICE_NAME = "TelegramRemote";
+
 export interface Config {
   botToken: string;
   allowedUserIds: number[];
   // Limits the number of lines before sending as a file instead of a message
   finalMessageLineLimit: number;
-  // Interval for step update messages (ms)
-  stepUpdateIntervalMs: number;
   audioTranscriptionApiKey?: string;
   audioTranscriptionProvider?: "openai" | "gemini" | null;
 }
@@ -70,27 +70,14 @@ export function loadConfig(): Config {
     }
   }
 
-  // Step update interval (default: 500ms)
-  const stepUpdateIntervalEnv = process.env.TELEGRAM_STEP_UPDATE_INTERVAL_MS;
-  let stepUpdateIntervalMs = 500;
-  if (stepUpdateIntervalEnv && stepUpdateIntervalEnv.trim() !== "") {
-    const parsed = Number.parseInt(stepUpdateIntervalEnv, 10);
-    if (!Number.isNaN(parsed) && parsed > 0) {
-      stepUpdateIntervalMs = parsed;
-    } else {
-      console.warn("[Config] Invalid TELEGRAM_STEP_UPDATE_INTERVAL_MS, using default 500");
-    }
-  }
-
   console.log(
-    `[Config] Configuration loaded: allowedUsers=${allowedUserIds.length}, finalMessageLineLimit=${finalMessageLineLimit}, stepUpdateIntervalMs=${stepUpdateIntervalMs}`,
+    `[Config] Configuration loaded: allowedUsers=${allowedUserIds.length}, finalMessageLineLimit=${finalMessageLineLimit}`,
   );
 
   return {
     botToken,
     allowedUserIds,
     finalMessageLineLimit,
-    stepUpdateIntervalMs,
     audioTranscriptionApiKey: audioApiKey,
     audioTranscriptionProvider: audioProvider,
   };
