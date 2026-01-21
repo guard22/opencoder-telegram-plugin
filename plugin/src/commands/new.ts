@@ -19,7 +19,7 @@ export function createNewCommandHandler(deps: CommandDeps) {
       }
 
       const sessionId = createSessionResponse.data.id;
-      globalStateStore.setActiveSession(sessionId);
+      globalStateStore.setCurrentSession(sessionId);
 
       logger.info("Created new session", {
         sessionId,

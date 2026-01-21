@@ -112,7 +112,7 @@ export function createAudioMessageHandler(deps: CommandDeps) {
       logger.info("Transcription successful", { textLength: result.text.length });
 
       // Prompt Mode: Send directly to OpenCode session
-      let sessionId = globalStateStore.getActiveSession();
+      let sessionId = globalStateStore.getCurrentSession();
 
       if (!sessionId) {
         // Auto-create session
@@ -126,7 +126,7 @@ export function createAudioMessageHandler(deps: CommandDeps) {
         }
 
         sessionId = createSessionResponse.data.id;
-        globalStateStore.setActiveSession(sessionId);
+        globalStateStore.setCurrentSession(sessionId);
         logger.info("Auto-created session for voice message", { sessionId });
       }
 

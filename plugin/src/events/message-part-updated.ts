@@ -17,13 +17,13 @@ export async function handleMessagePartUpdated(
     const text = part.text;
     context.globalStateStore.setLastMessagePartUpdate(text);
 
-    // If this event contains a delta payload, update the per-session lastUpdate and lastUpdateDelta maps
+    // If this event contains a delta payload, update the per-session lastUpdateMessage and lastUpdateDeltaMessage maps
     if (typeof event.properties.delta !== "undefined" && event.properties.delta !== null) {
       if (part.sessionID) {
         try {
-          context.globalStateStore.setLastUpdate(part.sessionID, text);
-          context.globalStateStore.setLastUpdateDelta(part.sessionID, event.properties.delta);
-          logger.info("Stored lastUpdate and lastUpdateDelta", {
+          context.globalStateStore.setLastUpdateMessage(part.sessionID, text);
+          context.globalStateStore.setLastUpdateDeltaMessage(part.sessionID, event.properties.delta);
+          logger.info("Stored lastUpdateMessage and lastUpdateDeltaMessage", {
             sessionID: part.sessionID,
             delta: event.properties.delta,
           });

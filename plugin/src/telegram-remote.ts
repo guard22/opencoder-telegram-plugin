@@ -33,7 +33,7 @@ export const TelegramRemote: Plugin = async ({ client }) => {
 
   console.log("[TelegramRemote] Creating global state store...");
   const globalStateStore = new GlobalStateStore({
-    allowedEventTypes: [
+    trackedEventTypes: [
       "file.edited",
       "session.updated",
       "session.status",

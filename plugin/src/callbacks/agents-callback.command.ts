@@ -1,5 +1,5 @@
 import type { Context } from "grammy";
-import type { CommandDeps } from "../commands/types.js";
+import type { CommandDeps } from "./types.js";
 
 export const createAgentsCallbackHandler = (deps: CommandDeps) => async (ctx: Context) => {
   if (!ctx.callbackQuery || !ctx.callbackQuery.data) return;
@@ -16,23 +16,17 @@ export const createAgentsCallbackHandler = (deps: CommandDeps) => async (ctx: Co
   const selectedAgent = availableAgents.find((agent) => agent.name === agentName);
 
   if (!selectedAgent) {
-    await deps.queue.enqueue(() =>
-      ctx.answerCallbackQuery({ text: "Agent not found or unavailable." }),
-    );
+    await ctx.answerCallbackQuery({ text: "Agent not found or unavailable." });
     return;
   }
 
   deps.globalStateStore.setCurrentAgent(selectedAgent.name);
-  await deps.queue.enqueue(() =>
-    ctx.answerCallbackQuery({ text: `Active agent set to ${selectedAgent.name}` }),
-  );
+  await ctx.answerCallbackQuery({ text: `Active agent set to ${selectedAgent.name}` });
 
   try {
-    await deps.queue.enqueue(() =>
-      ctx.editMessageText(`✅ Active agent set to *${selectedAgent.name}*`, {
-        parse_mode: "Markdown",
-      }),
-    );
+    await ctx.editMessageText(`✅ Active agent set to *${selectedAgent.name}*`, {
+      parse_mode: "Markdown",
+    });
   } catch (error) {
     await deps.bot.sendTemporaryMessage(`✅ Active agent set to ${selectedAgent.name}`, 3000);
   }

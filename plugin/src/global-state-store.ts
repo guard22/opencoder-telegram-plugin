@@ -15,32 +15,30 @@ export interface TodoItem {
 
 export class GlobalStateStore {
   private events: StoredEvent[] = [];
-  private allowedEventTypes: Set<string>;
+  private trackedEventTypes: Set<string>;
   private availableAgents: Agent[] = [];
   private currentAgent: string | null = null;
-  private currentSessionTitle: string | null = null;
   private sessionStatus: string | null = null;
   private lastMessagePartUpdate: string | null = null;
   private lastResponse: string | null = null;
   private lastResponseSentContent: string | null = null;
-  // Map storing the last sent final message per sessionID
   public lastSendFinalMessage: Map<string, string> = new Map();
-  // Map storing the last update text per sessionID when delta updates arrive
-  public lastUpdate: Map<string, string> = new Map();
-  // Map storing the last delta payload per sessionID
-  public lastUpdateDelta: Map<string, string> = new Map();
+
+  public lastUpdateMessage: Map<string, string> = new Map();
+  public lastUpdateDeltaMessage: Map<string, string> = new Map();
+
   private todos: TodoItem[] = [];
-  private activeSessionId: string | null = null;
+  private currentSessionId: string | null = null;
   private activeChatId: number | null = null;
   private sessionTitles: Map<string, string> = new Map();
 
-  constructor(config: { allowedEventTypes: string[] }) {
-    this.allowedEventTypes = new Set(config.allowedEventTypes);
+  constructor(config: { trackedEventTypes: string[] }) {
+    this.trackedEventTypes = new Set(config.trackedEventTypes);
   }
 
   // Session tracking methods
-  setActiveSession(sessionId: string): void {
-    this.activeSessionId = sessionId;
+  setCurrentSession(sessionId: string): void {
+    this.currentSessionId = sessionId;
   }
 
   setSessionTitle(sessionId: string, title: string): void {
@@ -51,8 +49,8 @@ export class GlobalStateStore {
     return this.sessionTitles.get(sessionId) ?? null;
   }
 
-  getActiveSession(): string | null {
-    return this.activeSessionId;
+  getCurrentSession(): string | null {
+    return this.currentSessionId;
   }
 
   setActiveChatId(chatId: number): void {
@@ -67,12 +65,12 @@ export class GlobalStateStore {
     this.activeChatId = null;
   }
 
-  clearActiveSession(): void {
-    this.activeSessionId = null;
+  clearCurrentSession(): void {
+    this.currentSessionId = null;
   }
 
   addEvent(type: string, data: unknown): void {
-    if (this.allowedEventTypes.has(type)) {
+    if (this.trackedEventTypes.has(type)) {
       this.events.push({
         type,
         data,
@@ -114,17 +112,11 @@ export class GlobalStateStore {
     return this.currentAgent;
   }
 
-  setCurrentSessionTitle(title: string): void {
-    this.currentSessionTitle = title;
-  }
-
-  getCurrentSessionTitle(): string | null {
-    return this.currentSessionTitle;
-  }
-
-  setCurrentSessionTitleForSession(sessionId: string, title: string): void {
-    this.currentSessionTitle = title;
-    this.sessionTitles.set(sessionId, title);
+  getCurrentSessionTitle(): string {
+    if (!this.currentSessionId) {
+      return this.currentSessionId ?? "";
+    }
+    return this.sessionTitles.get(this.currentSessionId) ?? this.currentSessionId;
   }
 
   setSessionStatus(status: string): void {
@@ -168,22 +160,22 @@ export class GlobalStateStore {
     return this.lastSendFinalMessage.get(sessionId) ?? null;
   }
 
-  setLastUpdate(sessionId: string, text: string): void {
+  setLastUpdateMessage(sessionId: string, text: string): void {
     if (!sessionId) return;
-    this.lastUpdate.set(sessionId, text);
+    this.lastUpdateMessage.set(sessionId, text);
   }
 
-  getLastUpdate(sessionId: string): string | null {
-    return this.lastUpdate.get(sessionId) ?? null;
+  getLastUpdateMessage(sessionId: string): string | null {
+    return this.lastUpdateMessage.get(sessionId) ?? null;
   }
 
-  setLastUpdateDelta(sessionId: string, delta: string): void {
+  setLastUpdateDeltaMessage(sessionId: string, delta: string): void {
     if (!sessionId) return;
-    this.lastUpdateDelta.set(sessionId, delta);
+    this.lastUpdateDeltaMessage.set(sessionId, delta);
   }
 
-  getLastUpdateDelta(sessionId: string): string | null {
-    return this.lastUpdateDelta.get(sessionId) ?? null;
+  getLastUpdateDeltaMessage(sessionId: string): string | null {
+    return this.lastUpdateDeltaMessage.get(sessionId) ?? null;
   }
 
   setTodos(todos: TodoItem[]): void {

@@ -52,7 +52,7 @@ export function createDeleteSessionsCommandHandler(deps: CommandDeps) {
     }
 
     // Clear active session
-    globalStateStore.clearActiveSession();
+    globalStateStore.clearCurrentSession();
 
     await deps.queue.enqueue(() =>
       ctx.reply(`Deleted ${deletedSessions} sessions (${failedSessions} failed).`),

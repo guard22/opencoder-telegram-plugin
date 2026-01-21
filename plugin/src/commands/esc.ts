@@ -18,7 +18,7 @@ export function createEscCommandHandler(deps: CommandDeps) {
       return;
     }
 
-    const sessionId = globalStateStore.getActiveSession();
+    const sessionId = globalStateStore.getCurrentSession();
 
     if (!sessionId) {
       await deps.queue.enqueue(() =>

@@ -10,9 +10,7 @@ export async function handleSessionUpdated(
 
   if (title && context.globalStateStore) {
     if (typeof sessionId === "string" && sessionId.trim()) {
-      context.globalStateStore.setCurrentSessionTitleForSession(sessionId, title);
-    } else {
-      context.globalStateStore.setCurrentSessionTitle(title);
+      context.globalStateStore.setSessionTitle(sessionId, title);
     }
     console.log(`[TelegramRemote] Session title updated: ${title}`);
   }

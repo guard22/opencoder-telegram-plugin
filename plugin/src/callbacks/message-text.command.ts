@@ -9,7 +9,7 @@ export function createMessageTextHandler(deps: CommandDeps) {
     if (ctx.chat?.type !== "private") return;
     if (ctx.message?.text?.startsWith("/")) return;
 
-    let sessionId = globalStateStore.getActiveSession();
+    let sessionId = globalStateStore.getCurrentSession();
 
     if (!sessionId) {
       try {
@@ -23,7 +23,7 @@ export function createMessageTextHandler(deps: CommandDeps) {
         }
 
         sessionId = createSessionResponse.data.id;
-        globalStateStore.setActiveSession(sessionId);
+        globalStateStore.setCurrentSession(sessionId);
 
         logger.info("Auto-created session", {
           sessionId,

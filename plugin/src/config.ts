@@ -8,7 +8,6 @@ export const SERVICE_NAME = "TelegramRemote";
 export interface Config {
   botToken: string;
   allowedUserIds: number[];
-  // Limits the number of lines before sending as a file instead of a message
   finalMessageLineLimit: number;
   audioTranscriptionApiKey?: string;
   audioTranscriptionProvider?: "openai" | "gemini" | null;

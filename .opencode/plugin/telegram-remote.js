@@ -204,7 +204,7 @@ function createAudioMessageHandler(deps) {
         return;
       }
       logger.info("Transcription successful", { textLength: result.text.length });
-      let sessionId = globalStateStore.getActiveSession();
+      let sessionId = globalStateStore.getCurrentSession();
       if (!sessionId) {
         const createSessionResponse = await client.session.create({ body: {} });
         if (createSessionResponse.error) {
@@ -215,7 +215,7 @@ function createAudioMessageHandler(deps) {
           return;
         }
         sessionId = createSessionResponse.data.id;
-        globalStateStore.setActiveSession(sessionId);
+        globalStateStore.setCurrentSession(sessionId);
         logger.info("Auto-created session for voice message", { sessionId });
       }
       const currentAgent = globalStateStore.getCurrentAgent();
@@ -342,7 +342,7 @@ function createDeleteSessionsCommandHandler(deps) {
       await deps.queue.enqueue(() => ctx.reply("\u274C Failed to delete sessions"));
       return;
     }
-    globalStateStore.clearActiveSession();
+    globalStateStore.clearCurrentSession();
     await deps.queue.enqueue(
       () => ctx.reply(`Deleted ${deletedSessions} sessions (${failedSessions} failed).`)
     );
@@ -402,7 +402,7 @@ function createEscCommandHandler(deps) {
       );
       return;
     }
-    const sessionId = globalStateStore.getActiveSession();
+    const sessionId = globalStateStore.getCurrentSession();
     if (!sessionId) {
       await deps.queue.enqueue(
         () => ctx.reply("\u274C No active session. Use /new to create one.", getDefaultKeyboardOptions())
@@ -463,7 +463,7 @@ function createMessageTextHandler(deps) {
     console.log(`[Bot] Text message received: "${ctx.message?.text?.slice(0, 50)}..."`);
     if (ctx.chat?.type !== "private") return;
     if (ctx.message?.text?.startsWith("/")) return;
-    let sessionId = globalStateStore.getActiveSession();
+    let sessionId = globalStateStore.getCurrentSession();
     if (!sessionId) {
       try {
         const createSessionResponse = await client.session.create({ body: {} });
@@ -475,7 +475,7 @@ function createMessageTextHandler(deps) {
           return;
         }
         sessionId = createSessionResponse.data.id;
-        globalStateStore.setActiveSession(sessionId);
+        globalStateStore.setCurrentSession(sessionId);
         logger.info("Auto-created session", {
           sessionId
         });
@@ -601,7 +601,7 @@ function createNewCommandHandler(deps) {
         return;
       }
       const sessionId = createSessionResponse.data.id;
-      globalStateStore.setActiveSession(sessionId);
+      globalStateStore.setCurrentSession(sessionId);
       logger.info("Created new session", {
         sessionId
       });
@@ -1131,9 +1131,9 @@ async function handleMessagePartUpdated(event, context) {
     if (typeof event.properties.delta !== "undefined" && event.properties.delta !== null) {
       if (part.sessionID) {
         try {
-          context.globalStateStore.setLastUpdate(part.sessionID, text);
-          context.globalStateStore.setLastUpdateDelta(part.sessionID, event.properties.delta);
-          logger.info("Stored lastUpdate and lastUpdateDelta", {
+          context.globalStateStore.setLastUpdateMessage(part.sessionID, text);
+          context.globalStateStore.setLastUpdateDeltaMessage(part.sessionID, event.properties.delta);
+          logger.info("Stored lastUpdateMessage and lastUpdateDeltaMessage", {
             sessionID: part.sessionID,
             delta: event.properties.delta
           });
@@ -1176,7 +1176,7 @@ async function handleMessageUpdated(event, context) {
 async function handleSessionCreated(event, context) {
   const sessionId = event.properties.info.id;
   console.log(`[TelegramRemote] Session created: ${sessionId.slice(0, 8)}`);
-  context.globalStateStore.setActiveSession(sessionId);
+  context.globalStateStore.setCurrentSession(sessionId);
   await context.bot.sendTemporaryMessage(`\u2705 Session initialized: ${sessionId.slice(0, 8)}`, 1e4);
 }
 
@@ -1226,9 +1226,7 @@ async function handleSessionUpdated(event, context) {
   const sessionId = event?.properties?.info?.id ?? event?.properties?.id;
   if (title && context.globalStateStore) {
     if (typeof sessionId === "string" && sessionId.trim()) {
-      context.globalStateStore.setCurrentSessionTitleForSession(sessionId, title);
-    } else {
-      context.globalStateStore.setCurrentSessionTitle(title);
+      context.globalStateStore.setSessionTitle(sessionId, title);
     }
     console.log(`[TelegramRemote] Session title updated: ${title}`);
   }
@@ -1247,30 +1245,26 @@ async function handleTodoUpdated(event, context) {
 // src/global-state-store.ts
 var GlobalStateStore = class {
   events = [];
-  allowedEventTypes;
+  trackedEventTypes;
   availableAgents = [];
   currentAgent = null;
-  currentSessionTitle = null;
   sessionStatus = null;
   lastMessagePartUpdate = null;
   lastResponse = null;
   lastResponseSentContent = null;
-  // Map storing the last sent final message per sessionID
   lastSendFinalMessage = /* @__PURE__ */ new Map();
-  // Map storing the last update text per sessionID when delta updates arrive
-  lastUpdate = /* @__PURE__ */ new Map();
-  // Map storing the last delta payload per sessionID
-  lastUpdateDelta = /* @__PURE__ */ new Map();
+  lastUpdateMessage = /* @__PURE__ */ new Map();
+  lastUpdateDeltaMessage = /* @__PURE__ */ new Map();
   todos = [];
-  activeSessionId = null;
+  currentSessionId = null;
   activeChatId = null;
   sessionTitles = /* @__PURE__ */ new Map();
   constructor(config) {
-    this.allowedEventTypes = new Set(config.allowedEventTypes);
+    this.trackedEventTypes = new Set(config.trackedEventTypes);
   }
   // Session tracking methods
-  setActiveSession(sessionId) {
-    this.activeSessionId = sessionId;
+  setCurrentSession(sessionId) {
+    this.currentSessionId = sessionId;
   }
   setSessionTitle(sessionId, title) {
     this.sessionTitles.set(sessionId, title);
@@ -1278,8 +1272,8 @@ var GlobalStateStore = class {
   getSessionTitle(sessionId) {
     return this.sessionTitles.get(sessionId) ?? null;
   }
-  getActiveSession() {
-    return this.activeSessionId;
+  getCurrentSession() {
+    return this.currentSessionId;
   }
   setActiveChatId(chatId) {
     this.activeChatId = chatId;
@@ -1290,11 +1284,11 @@ var GlobalStateStore = class {
   clearActiveChatId() {
     this.activeChatId = null;
   }
-  clearActiveSession() {
-    this.activeSessionId = null;
+  clearCurrentSession() {
+    this.currentSessionId = null;
   }
   addEvent(type, data) {
-    if (this.allowedEventTypes.has(type)) {
+    if (this.trackedEventTypes.has(type)) {
       this.events.push({
         type,
         data,
@@ -1329,15 +1323,11 @@ var GlobalStateStore = class {
   getCurrentAgent() {
     return this.currentAgent;
   }
-  setCurrentSessionTitle(title) {
-    this.currentSessionTitle = title;
-  }
   getCurrentSessionTitle() {
-    return this.currentSessionTitle;
-  }
-  setCurrentSessionTitleForSession(sessionId, title) {
-    this.currentSessionTitle = title;
-    this.sessionTitles.set(sessionId, title);
+    if (!this.currentSessionId) {
+      return this.currentSessionId ?? "";
+    }
+    return this.sessionTitles.get(this.currentSessionId) ?? this.currentSessionId;
   }
   setSessionStatus(status) {
     this.sessionStatus = status;
@@ -1370,19 +1360,19 @@ var GlobalStateStore = class {
   getLastSendFinalMessage(sessionId) {
     return this.lastSendFinalMessage.get(sessionId) ?? null;
   }
-  setLastUpdate(sessionId, text) {
+  setLastUpdateMessage(sessionId, text) {
     if (!sessionId) return;
-    this.lastUpdate.set(sessionId, text);
+    this.lastUpdateMessage.set(sessionId, text);
   }
-  getLastUpdate(sessionId) {
-    return this.lastUpdate.get(sessionId) ?? null;
+  getLastUpdateMessage(sessionId) {
+    return this.lastUpdateMessage.get(sessionId) ?? null;
   }
-  setLastUpdateDelta(sessionId, delta) {
+  setLastUpdateDeltaMessage(sessionId, delta) {
     if (!sessionId) return;
-    this.lastUpdateDelta.set(sessionId, delta);
+    this.lastUpdateDeltaMessage.set(sessionId, delta);
   }
-  getLastUpdateDelta(sessionId) {
-    return this.lastUpdateDelta.get(sessionId) ?? null;
+  getLastUpdateDeltaMessage(sessionId) {
+    return this.lastUpdateDeltaMessage.get(sessionId) ?? null;
   }
   setTodos(todos) {
     this.todos = [...todos];
@@ -1411,7 +1401,7 @@ var TelegramRemote = async ({ client }) => {
   }
   console.log("[TelegramRemote] Creating global state store...");
   const globalStateStore = new GlobalStateStore({
-    allowedEventTypes: [
+    trackedEventTypes: [
       "file.edited",
       "session.updated",
       "session.status",
