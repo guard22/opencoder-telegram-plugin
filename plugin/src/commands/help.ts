@@ -21,7 +21,6 @@ export function createHelpCommandHandler(deps: CommandDeps) {
       "\n" +
       "/new - Create a new OpenCode session.\n" +
       "/projects - List all known projects.\n" +
-      "/deletesessions - Delete all OpenCode sessions.\n" +
       "/sessions - List all active OpenCode sessions.\n" +
       "/agents - List available agents.\n" +
       "/todos - Show current todos.\n" +
@@ -35,7 +34,6 @@ export function createHelpCommandHandler(deps: CommandDeps) {
       "- Send messages in this chat to interact with the active session.\n" +
       "- Send voice messages or audio files (max 25MB) to transcribe and send them as prompts.\n" +
       "- Use Tab and Esc buttons or commands to send special keys.\n" +
-      "- Admin-only commands (like /deletesessions) are restricted to configured users.\n" +
       "\n" +
       "Note: All commands require you to be a configured allowed user. The bot enforces this via its middleware and command-level checks.";
 

@@ -3,15 +3,21 @@
  * https://github.com/YOUR_USERNAME/opencoder-telegram-remote-plugin
  */
 
+import { config as loadEnv } from "dotenv";
 // src/config.ts
 import { resolve } from "path";
-import { config as loadEnv } from "dotenv";
+
 loadEnv({ path: resolve(process.cwd(), ".env") });
 function parseAllowedUserIds(value) {
   if (!value || value.trim() === "") {
     return [];
   }
-  return value.split(",").map((id) => id.trim()).filter((id) => id !== "").map((id) => Number.parseInt(id, 10)).filter((id) => !Number.isNaN(id));
+  return value
+    .split(",")
+    .map((id) => id.trim())
+    .filter((id) => id !== "")
+    .map((id) => Number.parseInt(id, 10))
+    .filter((id) => !Number.isNaN(id));
 }
 function loadConfig() {
   console.log("[Config] Loading environment configuration...");
@@ -25,10 +31,13 @@ function loadConfig() {
   if (allowedUserIds.length === 0) {
     console.error("[Config] Missing or invalid TELEGRAM_ALLOWED_USER_IDS");
     throw new Error(
-      "Missing or invalid TELEGRAM_ALLOWED_USER_IDS (must be comma-separated numeric user IDs)"
+      "Missing or invalid TELEGRAM_ALLOWED_USER_IDS (must be comma-separated numeric user IDs)",
     );
   }
-  const audioApiKey = process.env.AUDIO_TRANSCRIPTION_API_KEY || process.env.OPENAI_API_KEY || process.env.GOOGLE_GEMINI_API_KEY;
+  const audioApiKey =
+    process.env.AUDIO_TRANSCRIPTION_API_KEY ||
+    process.env.OPENAI_API_KEY ||
+    process.env.GOOGLE_GEMINI_API_KEY;
   let audioProvider = null;
   if (audioApiKey) {
     audioProvider = audioApiKey.startsWith("sk-") ? "openai" : "gemini";
@@ -47,17 +56,15 @@ function loadConfig() {
     }
   }
   console.log(
-    `[Config] Configuration loaded: allowedUsers=${allowedUserIds.length}, finalMessageLineLimit=${finalMessageLineLimit}`
+    `[Config] Configuration loaded: allowedUsers=${allowedUserIds.length}, finalMessageLineLimit=${finalMessageLineLimit}`,
   );
   return {
     botToken,
     allowedUserIds,
     finalMessageLineLimit,
     audioTranscriptionApiKey: audioApiKey,
-    audioTranscriptionProvider: audioProvider
+    audioTranscriptionProvider: audioProvider,
   };
 }
 
-export {
-  loadConfig
-};
+export { loadConfig };

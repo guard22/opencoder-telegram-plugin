@@ -1,5 +1,5 @@
 export { createAgentsCommandHandler } from "./agents.js";
-export { createDeleteSessionsCommandHandler } from "./deletesessions.js";
+export { createAudioMessageHandler } from "./audio-message.command.js";
 export { createEscCommandHandler } from "./esc.js";
 export { createHelpCommandHandler } from "./help.js";
 export { createMessageTextHandler } from "./message-text.command.js";

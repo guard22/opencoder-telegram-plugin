@@ -1,6 +1,6 @@
 import type { Context } from "grammy";
-import { getDefaultKeyboardOptions } from "../lib/utils.js";
 import type { CommandDeps } from "./types.js";
+import { getDefaultKeyboardOptions } from "../lib/utils.js";
 
 export function createMessageTextHandler(deps: CommandDeps) {
   const { config, client, logger, globalStateStore } = deps;

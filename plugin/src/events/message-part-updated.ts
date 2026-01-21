@@ -22,7 +22,10 @@ export async function handleMessagePartUpdated(
       if (part.sessionID) {
         try {
           context.globalStateStore.setLastUpdateMessage(part.sessionID, text);
-          context.globalStateStore.setLastUpdateDeltaMessage(part.sessionID, event.properties.delta);
+          context.globalStateStore.setLastUpdateDeltaMessage(
+            part.sessionID,
+            event.properties.delta,
+          );
           logger.info("Stored lastUpdateMessage and lastUpdateDeltaMessage", {
             sessionID: part.sessionID,
             delta: event.properties.delta,

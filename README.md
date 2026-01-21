@@ -154,7 +154,6 @@ These states are used to coordinate between the Telegram bot interface and the O
 ## Commands
 
 - `/new` - Create a new session and set it as active
-- `/deletesessions` - Delete all OpenCode sessions
 - `/help` - Show help message
 
 ## Security

@@ -1,5 +1,5 @@
 import type { Context } from "grammy";
-import type { CommandDeps } from "./types.js";
+import type { CommandDeps } from "../commands/types.js";
 
 export const createModelsCallbackHandler = (deps: CommandDeps) => async (ctx: Context) => {
   if (!ctx.callbackQuery || !ctx.callbackQuery.data) return;

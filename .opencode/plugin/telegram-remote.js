@@ -6,7 +6,7 @@
 // src/bot.ts
 import { Bot, InputFile } from "grammy";
 
-// src/commands/agents-callback.command.ts
+// src/callbacks/agents-callback.command.ts
 var createAgentsCallbackHandler = (deps) => async (ctx) => {
   if (!ctx.callbackQuery || !ctx.callbackQuery.data) return;
   if (ctx.chat?.type !== "private") return;
@@ -31,7 +31,7 @@ var createAgentsCallbackHandler = (deps) => async (ctx) => {
   }
 };
 
-// src/commands/models-callback.command.ts
+// src/callbacks/models-callback.command.ts
 var createModelsCallbackHandler = (deps) => async (ctx) => {
   if (!ctx.callbackQuery || !ctx.callbackQuery.data) return;
   if (ctx.chat?.type !== "private") return;
@@ -61,6 +61,78 @@ var createModelsCallbackHandler = (deps) => async (ctx) => {
     await ctx.answerCallbackQuery({ text: "Failed to set model." });
   }
 };
+
+// src/callbacks/sessions-callback.command.ts
+var createSessionsCallbackHandler = (deps) => async (ctx) => {
+  if (!ctx.callbackQuery || !ctx.callbackQuery.data) return;
+  if (ctx.chat?.type !== "private") return;
+  const data = ctx.callbackQuery.data;
+  if (!data.startsWith("session:")) return;
+  const sessionId = data.replace("session:", "");
+  if (!sessionId) return;
+  deps.globalStateStore.setCurrentSession(sessionId);
+  const sessionTitle = deps.globalStateStore.getSessionTitle(sessionId) || sessionId;
+  await ctx.answerCallbackQuery({ text: `Active session set to ${sessionTitle}` });
+  try {
+    await ctx.editMessageText(`\u2705 Active session set to *${sessionTitle}*`, {
+      parse_mode: "Markdown"
+    });
+  } catch (error) {
+    await deps.bot.sendTemporaryMessage(`\u2705 Active session set to ${sessionTitle}`, 3e3);
+  }
+};
+
+// src/commands/agents.ts
+import { InlineKeyboard } from "grammy";
+function createAgentsCommandHandler({
+  config,
+  client,
+  logger,
+  bot,
+  globalStateStore
+}) {
+  return async (ctx) => {
+    console.log("[Bot] /agents command received");
+    if (ctx.chat?.type !== "private") return;
+    try {
+      const agentsResponse = await client.app.agents();
+      if (agentsResponse.error) {
+        logger.error("Failed to list agents", { error: agentsResponse.error });
+        await bot.sendTemporaryMessage("\u274C Failed to list agents");
+        return;
+      }
+      const configResponse = await client.config.get();
+      let defaultAgent = "";
+      if (configResponse.data) {
+        const cfg = configResponse.data;
+        defaultAgent = cfg.default_agent || "";
+      }
+      const agents = agentsResponse.data || [];
+      const primaryAgents = agents.filter((a) => a.mode === "primary" && !a.builtIn);
+      globalStateStore.setAgents(primaryAgents);
+      if (defaultAgent && primaryAgents.some((agent) => agent.name === defaultAgent)) {
+        globalStateStore.setCurrentAgent(defaultAgent);
+      }
+      if (primaryAgents.length === 0) {
+        await bot.sendTemporaryMessage("No primary agents found.");
+        return;
+      }
+      const keyboard = new InlineKeyboard();
+      primaryAgents.forEach((agent) => {
+        const isSelected = agent.name === defaultAgent ? "\u2705 " : "";
+        keyboard.text(`${isSelected}${agent.name}`, `agent:${agent.name}`).row();
+      });
+      const message = "*Select an agent:*";
+      await bot.sendTemporaryMessage(message, 3e4, {
+        parse_mode: "Markdown",
+        reply_markup: keyboard
+      });
+    } catch (error) {
+      logger.error("Failed to list agents", { error: String(error) });
+      await bot.sendTemporaryMessage("\u274C Failed to list agents");
+    }
+  };
+}
 
 // src/commands/audio-message.command.ts
 import { mkdir, writeFile } from "fs/promises";
@@ -98,7 +170,7 @@ async function transcribeWithGemini(audioFilePath, apiKey, mimeType, logger) {
       throw new Error("Failed to get URI for uploaded file");
     }
     const response = await ai.models.generateContent({
-      model: "gemini-1.5-flash",
+      model: "gemini-3-flash-preview",
       contents: createUserContent([
         createPartFromUri(uploadedFile.uri || "", uploadedFile.mimeType || "audio/ogg"),
         "Transcribe this audio file. Return only the transcribed text without any additional formatting, explanations, or markdown."
@@ -247,108 +319,6 @@ function createAudioMessageHandler(deps) {
   };
 }
 
-// src/commands/agents.ts
-import { InlineKeyboard } from "grammy";
-function createAgentsCommandHandler({
-  config,
-  client,
-  logger,
-  bot,
-  globalStateStore
-}) {
-  return async (ctx) => {
-    console.log("[Bot] /agents command received");
-    if (ctx.chat?.type !== "private") return;
-    try {
-      const agentsResponse = await client.app.agents();
-      if (agentsResponse.error) {
-        logger.error("Failed to list agents", { error: agentsResponse.error });
-        await bot.sendTemporaryMessage("\u274C Failed to list agents");
-        return;
-      }
-      const configResponse = await client.config.get();
-      let defaultAgent = "";
-      if (configResponse.data) {
-        const cfg = configResponse.data;
-        defaultAgent = cfg.default_agent || "";
-      }
-      const agents = agentsResponse.data || [];
-      const primaryAgents = agents.filter((a) => a.mode === "primary" && !a.builtIn);
-      globalStateStore.setAgents(primaryAgents);
-      if (defaultAgent && primaryAgents.some((agent) => agent.name === defaultAgent)) {
-        globalStateStore.setCurrentAgent(defaultAgent);
-      }
-      if (primaryAgents.length === 0) {
-        await bot.sendTemporaryMessage("No primary agents found.");
-        return;
-      }
-      const keyboard = new InlineKeyboard();
-      primaryAgents.forEach((agent) => {
-        const isSelected = agent.name === defaultAgent ? "\u2705 " : "";
-        keyboard.text(`${isSelected}${agent.name}`, `agent:${agent.name}`).row();
-      });
-      const message = "*Select an agent:*";
-      await bot.sendTemporaryMessage(message, 3e4, {
-        parse_mode: "Markdown",
-        reply_markup: keyboard
-      });
-    } catch (error) {
-      logger.error("Failed to list agents", { error: String(error) });
-      await bot.sendTemporaryMessage("\u274C Failed to list agents");
-    }
-  };
-}
-
-// src/commands/deletesessions.ts
-function createDeleteSessionsCommandHandler(deps) {
-  const { config, client, logger, globalStateStore } = deps;
-  return async (ctx) => {
-    console.log("[Bot] /deletesessions command received");
-    if (ctx.chat?.type !== "private") return;
-    let deletedSessions = 0;
-    let failedSessions = 0;
-    try {
-      const sessionsResponse = await client.session.list();
-      if (sessionsResponse.error) {
-        logger.error("Failed to list sessions", { error: sessionsResponse.error });
-        await deps.queue.enqueue(() => ctx.reply("\u274C Failed to list sessions"));
-        return;
-      }
-      const sessions = sessionsResponse.data || [];
-      for (const session of sessions) {
-        try {
-          const deleteResponse = await client.session.delete({
-            path: { id: session.id }
-          });
-          if (deleteResponse.error) {
-            failedSessions += 1;
-            logger.error("Failed to delete session", {
-              sessionId: session.id,
-              error: deleteResponse.error
-            });
-            continue;
-          }
-          deletedSessions += 1;
-        } catch (error) {
-          failedSessions += 1;
-          logger.error("Failed to delete session", {
-            sessionId: session.id,
-            error: String(error)
-          });
-        }
-      }
-    } catch (error) {
-      logger.error("Failed to delete sessions", { error: String(error) });
-      await deps.queue.enqueue(() => ctx.reply("\u274C Failed to delete sessions"));
-      return;
-    }
-    globalStateStore.clearCurrentSession();
-    await deps.queue.enqueue(
-      () => ctx.reply(`Deleted ${deletedSessions} sessions (${failedSessions} failed).`)
-    );
-  };
-}
-
 // src/lib/utils.ts
 import { mkdirSync, writeFileSync } from "fs";
 import { join as join2 } from "path";
@@ -451,7 +421,7 @@ function createHelpCommandHandler(deps) {
       await deps.queue.enqueue(() => ctx.reply("You are not authorized to use this bot."));
       return;
     }
-    const helpMessage = "Available commands:\n\n/new - Create a new OpenCode session.\n/projects - List all known projects.\n/deletesessions - Delete all OpenCode sessions.\n/sessions - List all active OpenCode sessions.\n/agents - List available agents.\n/todos - Show current todos.\n/tab - Send a Tab key to the active session.\n/esc - Send an Escape key to the active session.\n/help - Show this help message.\n\nUsage:\n- Use /new to create a new session.\n- Use /todos to list the current todos.\n- Send messages in this chat to interact with the active session.\n- Send voice messages or audio files (max 25MB) to transcribe and send them as prompts.\n- Use Tab and Esc buttons or commands to send special keys.\n- Admin-only commands (like /deletesessions) are restricted to configured users.\n\nNote: All commands require you to be a configured allowed user. The bot enforces this via its middleware and command-level checks.";
+    const helpMessage = "Available commands:\n\n/new - Create a new OpenCode session.\n/projects - List all known projects.\n/sessions - List all active OpenCode sessions.\n/agents - List available agents.\n/todos - Show current todos.\n/tab - Send a Tab key to the active session.\n/esc - Send an Escape key to the active session.\n/help - Show this help message.\n\nUsage:\n- Use /new to create a new session.\n- Use /todos to list the current todos.\n- Send messages in this chat to interact with the active session.\n- Send voice messages or audio files (max 25MB) to transcribe and send them as prompts.\n- Use Tab and Esc buttons or commands to send special keys.\n\nNote: All commands require you to be a configured allowed user. The bot enforces this via its middleware and command-level checks.";
     await deps.queue.enqueue(() => ctx.reply(helpMessage, getDefaultKeyboardOptions()));
   };
 }
@@ -942,7 +912,6 @@ function createTelegramBot(config, client, logger, globalStateStore) {
   };
   bot.command("new", createNewCommandHandler(commandDeps));
   bot.command("projects", createProjectsCommandHandler(commandDeps));
-  bot.command("deletesessions", createDeleteSessionsCommandHandler(commandDeps));
   bot.command("sessions", createSessionsCommandHandler(commandDeps));
   bot.command("agents", createAgentsCommandHandler(commandDeps));
   bot.command("models", createModelsCommandHandler(commandDeps));
@@ -955,6 +924,7 @@ function createTelegramBot(config, client, logger, globalStateStore) {
   bot.on("message:audio", createAudioMessageHandler(commandDeps));
   bot.callbackQuery(/^agent:/, createAgentsCallbackHandler(commandDeps));
   bot.callbackQuery(/^model:/, createModelsCallbackHandler(commandDeps));
+  bot.callbackQuery(/^session:/, createSessionsCallbackHandler(commandDeps));
   bot.catch((error) => {
     console.error("[Bot] Bot error caught:", error);
     logger.error("Bot error", { error: String(error) });
@@ -1132,7 +1102,10 @@ async function handleMessagePartUpdated(event, context) {
       if (part.sessionID) {
         try {
           context.globalStateStore.setLastUpdateMessage(part.sessionID, text);
-          context.globalStateStore.setLastUpdateDeltaMessage(part.sessionID, event.properties.delta);
+          context.globalStateStore.setLastUpdateDeltaMessage(
+            part.sessionID,
+            event.properties.delta
+          );
           logger.info("Stored lastUpdateMessage and lastUpdateDeltaMessage", {
             sessionID: part.sessionID,
             delta: event.properties.delta
