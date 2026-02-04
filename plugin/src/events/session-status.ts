@@ -6,10 +6,9 @@ export async function handleSessionStatus(event: any, context: EventHandlerConte
 
     // If the session becomes idle, tell the user the agent has finished
     if (statusType === "idle") {
-      console.log(`[TelegramRemote] Session is idle. Sending finished notification.`);
       try {
         // Get the session ID and title
-        const sessionId = event?.properties?.info?.id ?? event?.properties?.id;
+        const sessionId = event?.properties?.info?.id ?? event?.properties?.sessionID ?? event?.properties?.id;
         let message = "Agent has finished.";
 
         if (sessionId && context.sessionTitleService) {
@@ -19,7 +18,7 @@ export async function handleSessionStatus(event: any, context: EventHandlerConte
           }
         }
 
-        await context.bot.sendTemporaryMessage(message);
+        await context.bot.sendMessage(message);
       } catch (error) {
         console.error("[TelegramRemote] Failed to send idle notification:");
       }

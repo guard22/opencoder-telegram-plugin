@@ -5,7 +5,7 @@ export async function handleSessionUpdated(
   context: EventHandlerContext,
 ): Promise<void> {
   const title = event?.properties?.info?.title;
-  const sessionId = event?.properties?.info?.id ?? event?.properties?.id;
+  const sessionId = event?.properties?.info?.id ?? event?.properties?.sessionID ?? event?.properties?.id;
 
   if (title && context.sessionTitleService) {
     if (typeof sessionId === "string" && sessionId.trim()) {

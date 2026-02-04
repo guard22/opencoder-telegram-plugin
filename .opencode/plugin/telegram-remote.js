@@ -77,10 +77,7 @@ function createBotManager(bot, sessionTitleService) {
               console.log("[Bot] No active chat yet; skipping startup message");
               return;
             }
-            const msg = await bot.api.sendMessage(chatId, "Messaging enabled");
-            setTimeout(() => {
-              bot.api.deleteMessage(chatId, msg.message_id).catch(console.error);
-            }, 1e3);
+            await bot.api.sendMessage(chatId, "Messaging enabled");
             console.log("[Bot] Startup message sent to active chat");
           } catch (error) {
             console.error("[Bot] Failed to send startup message:", error);
@@ -109,16 +106,6 @@ function createBotManager(bot, sessionTitleService) {
       console.log(`[Bot] deleteMessage ${messageId}`);
       const chatId = requireActiveChatId(sessionTitleService, "deleteMessage");
       await bot.api.deleteMessage(chatId, messageId);
-    },
-    async sendTemporaryMessage(text, durationMs = 1e4, options) {
-      console.log(
-        `[Bot] sendTemporaryMessage: "${text.slice(0, 50)}..." (duration: ${durationMs}ms)`
-      );
-      const chatId = requireActiveChatId(sessionTitleService, "sendTemporaryMessage");
-      const msg = await bot.api.sendMessage(chatId, text, options);
-      setTimeout(() => {
-        bot.api.deleteMessage(chatId, msg.message_id).catch(console.error);
-      }, durationMs);
     }
   };
 }
@@ -176,15 +163,23 @@ async function handleSessionStatus(event, context) {
     if (statusType === "idle") {
       console.log(`[TelegramRemote] Session is idle. Sending finished notification.`);
       try {
-        const sessionId = event?.properties?.info?.id ?? event?.properties?.id;
+        const sessionId = event?.properties?.info?.id ?? event?.properties?.sessionID ?? event?.properties?.id;
+        console.log("[TelegramRemote] Extracted sessionId for idle event:", sessionId);
+        console.log("[TelegramRemote] Event structure:", JSON.stringify(event?.properties, null, 2));
         let message = "Agent has finished.";
         if (sessionId && context.sessionTitleService) {
           const title = context.sessionTitleService.getSessionTitle(sessionId);
+          console.log("[TelegramRemote] Retrieved title from service:", title);
           if (title) {
             message = `Agent has finished: ${title}`;
           }
+        } else {
+          console.log("[TelegramRemote] SessionId or sessionTitleService missing:", {
+            hasSessionId: !!sessionId,
+            hasService: !!context.sessionTitleService
+          });
         }
-        await context.bot.sendTemporaryMessage(message);
+        await context.bot.sendMessage(message);
       } catch (error) {
         console.error("[TelegramRemote] Failed to send idle notification:");
       }
@@ -195,7 +190,7 @@ async function handleSessionStatus(event, context) {
 // src/events/session-updated.ts
 async function handleSessionUpdated(event, context) {
   const title = event?.properties?.info?.title;
-  const sessionId = event?.properties?.info?.id ?? event?.properties?.id;
+  const sessionId = event?.properties?.info?.id ?? event?.properties?.sessionID ?? event?.properties?.id;
   if (title && context.sessionTitleService) {
     if (typeof sessionId === "string" && sessionId.trim()) {
       context.sessionTitleService.setSessionTitle(sessionId, title);
@@ -205,11 +200,23 @@ async function handleSessionUpdated(event, context) {
 
 // src/events/question-asked.ts
 async function handleQuestionAsked(event, context) {
-  const question = event?.properties?.question;
-  if (question && context.bot) {
-    console.log(`[TelegramRemote] Question asked: ${question}`);
+  console.log("[TelegramRemote] handleQuestionAsked called with event:", JSON.stringify(event, null, 2));
+  const sessionID = event?.properties?.sessionID;
+  const questions = event?.properties?.questions;
+  if (sessionID && questions && Array.isArray(questions) && questions.length > 0 && context.bot) {
+    const sessionTitle = context.sessionTitleService.getSessionTitle(sessionID);
+    const titleText = sessionTitle ? `\u{1F4CB} ${sessionTitle}` : `Session: ${sessionID}`;
+    const questionTexts = questions.map((q, index) => {
+      const header = q.header ? `${q.header}: ` : "";
+      return `${index + 1}. ${header}${q.question}`;
+    }).join("\n");
+    const message = `${titleText}
+
+\u2753 Questions:
+${questionTexts}`;
+    console.log(`[TelegramRemote] Sending questions for session ${sessionID}`);
     try {
-      await context.bot.sendTemporaryMessage(`\u2753 Question: ${question}`);
+      await context.bot.sendMessage(message);
     } catch (error) {
       console.error("[TelegramRemote] Failed to send question notification:", error);
     }

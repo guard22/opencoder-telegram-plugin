@@ -9,7 +9,6 @@ export interface TelegramBotManager {
   sendMessage(text: string, options?: any): Promise<{ message_id: number }>;
   editMessage(messageId: number, text: string): Promise<void>;
   deleteMessage(messageId: number): Promise<void>;
-  sendTemporaryMessage(text: string, durationMs?: number, options?: any): Promise<void>;
 }
 
 let botInstance: Bot | null = null;
@@ -104,11 +103,7 @@ function createBotManager(
               console.log("[Bot] No active chat yet; skipping startup message");
               return;
             }
-            const msg = await bot.api.sendMessage(chatId, "Messaging enabled");
-            // Delete after 1 second
-            setTimeout(() => {
-              bot.api.deleteMessage(chatId, msg.message_id).catch(console.error);
-            }, 1000);
+            await bot.api.sendMessage(chatId, "Messaging enabled");
             console.log("[Bot] Startup message sent to active chat");
           } catch (error) {
             console.error("[Bot] Failed to send startup message:", error);
@@ -141,18 +136,6 @@ function createBotManager(
       console.log(`[Bot] deleteMessage ${messageId}`);
       const chatId = requireActiveChatId(sessionTitleService, "deleteMessage");
       await bot.api.deleteMessage(chatId, messageId);
-    },
-
-    async sendTemporaryMessage(text: string, durationMs: number = 10000, options?: any) {
-      console.log(
-        `[Bot] sendTemporaryMessage: "${text.slice(0, 50)}..." (duration: ${durationMs}ms)`,
-      );
-      const chatId = requireActiveChatId(sessionTitleService, "sendTemporaryMessage");
-      const msg = await bot.api.sendMessage(chatId, text, options);
-      // Delete after the specified duration
-      setTimeout(() => {
-        bot.api.deleteMessage(chatId, msg.message_id).catch(console.error);
-      }, durationMs);
     },
   };
 }
