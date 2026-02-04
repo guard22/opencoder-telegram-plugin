@@ -93,11 +93,6 @@ export const TelegramRemote: Plugin = async ({ client }) => {
 
   return {
     event: async ({ event }) => {
-      // console.log(`[TelegramRemote] Event received: ${event.type}`);
-
-      // Write event to debug file
-      // writeEventToDebugFile(event, false, []);
-
       const handler = eventHandlers[event.type as keyof typeof eventHandlers];
       if (handler) {
         await handler(event as any, eventContext);
