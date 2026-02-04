@@ -3,20 +3,15 @@ import { createTelegramBot } from "./bot.js";
 import { type Config, loadConfig } from "./config.js";
 import {
   type EventHandlerContext,
-  handleMessagePartUpdated,
-  handleMessageUpdated,
-  handleSessionCreated,
+  handleQuestionAsked,
   handleSessionStatus,
   handleSessionUpdated,
-  handleTodoUpdated,
 } from "./events/index.js";
 
 import { GlobalStateStore } from "./global-state-store.js";
-import { createLogger } from "./lib/logger.js";
 
 export const TelegramRemote: Plugin = async ({ client }) => {
   console.log("[TelegramRemote] Plugin initialization started");
-  const logger = createLogger(client);
 
   let config: Config;
   try {
@@ -25,33 +20,27 @@ export const TelegramRemote: Plugin = async ({ client }) => {
     console.log("[TelegramRemote] Configuration loaded successfully");
   } catch (error) {
     console.error("[TelegramRemote] Configuration error:", error);
-    logger.error(`Configuration error: ${error}`);
     return {
-      event: async () => {},
+      event: async () => { },
     };
   }
 
   console.log("[TelegramRemote] Creating global state store...");
   const globalStateStore = new GlobalStateStore({
     trackedEventTypes: [
-      "file.edited",
       "session.updated",
       "session.status",
-      "message.part.updated",
-      "message.updated",
-      "todo.updated",
     ],
   });
 
   console.log("[TelegramRemote] Creating Telegram bot...");
 
-  const bot = createTelegramBot(config, client, logger, globalStateStore);
+  const bot = createTelegramBot(config, client, globalStateStore);
   console.log("[TelegramRemote] Bot created successfully");
 
   console.log("[TelegramRemote] Starting Telegram bot polling...");
   bot.start().catch((error) => {
     console.error("[TelegramRemote] Failed to start bot:", error);
-    logger.error("Failed to start bot", { error: String(error) });
   });
 
   let isShuttingDown = false;
@@ -102,12 +91,9 @@ export const TelegramRemote: Plugin = async ({ client }) => {
 
   // Event type to handler mapping
   const eventHandlers = {
-    "session.created": handleSessionCreated,
-    "message.updated": handleMessageUpdated,
-    "message.part.updated": handleMessagePartUpdated,
     "session.updated": handleSessionUpdated,
     "session.status": handleSessionStatus,
-    "todo.updated": handleTodoUpdated,
+    "question.asked": handleQuestionAsked,
   } as const;
 
   return {
