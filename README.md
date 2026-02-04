@@ -129,27 +129,14 @@ Telegram Chat  ←→  Active OpenCode Session
 - Previous session remains in OpenCode but becomes inactive
 - Sessions persist in memory only
 
-## Global State Management
+## Session Title Management
 
-The plugin uses a `GlobalStateStore` to manage various states across the application. This store maintains the following states:
+The plugin uses a `SessionTitleService` to manage session titles and active chat information in memory. This service maintains:
 
-- **Events**: A list of stored events, each containing:
-  - `type`: The event type (e.g., session updates, message updates)
-  - `data`: Associated event data
-  - `timestamp`: When the event occurred
-  - Only allowed event types are stored, as defined during initialization
+- **Session Titles**: Maps session IDs to their human-readable titles
+- **Active Chat ID**: Tracks the currently active Telegram chat ID for sending messages
 
-- **Available Agents**: A list of agents available in the OpenCode environment
-
-- **Current Agent**: The currently selected agent for interactions
-
-- **Current Session Title**: The title of the active OpenCode session
-
-- **Session Status**: The current status of the session (e.g., active, inactive)
-
-- **Last Message Part Update**: The most recent update to a message part, used for tracking incremental message changes
-
-These states are used to coordinate between the Telegram bot interface and the OpenCode session management, ensuring real-time synchronization and proper handling of user interactions.
+This lightweight service coordinates between the Telegram bot interface and the OpenCode session management.
 
 ## Commands
 

@@ -8,9 +8,6 @@ export const SERVICE_NAME = "TelegramRemote";
 export interface Config {
   botToken: string;
   allowedUserIds: number[];
-  finalMessageLineLimit: number;
-  audioTranscriptionApiKey?: string;
-  audioTranscriptionProvider?: "openai" | "gemini" | null;
 }
 
 function parseAllowedUserIds(value: string | undefined): number[] {
@@ -43,41 +40,12 @@ export function loadConfig(): Config {
     );
   }
 
-  const audioApiKey =
-    process.env.AUDIO_TRANSCRIPTION_API_KEY ||
-    process.env.OPENAI_API_KEY ||
-    process.env.GOOGLE_GEMINI_API_KEY;
-
-  let audioProvider: "openai" | "gemini" | null = null;
-  if (audioApiKey) {
-    // Auto-detect provider based on key format
-    audioProvider = audioApiKey.startsWith("sk-") ? "openai" : "gemini";
-    console.log(`[Config] Audio transcription enabled with ${audioProvider}`);
-  } else {
-    console.log("[Config] Audio transcription disabled (no API key)");
-  }
-
-  // Final message line limit (default: 100)
-  const finalMessageLineLimitEnv = process.env.TELEGRAM_FINAL_MESSAGE_LINE_LIMIT;
-  let finalMessageLineLimit = 100;
-  if (finalMessageLineLimitEnv && finalMessageLineLimitEnv.trim() !== "") {
-    const parsed = Number.parseInt(finalMessageLineLimitEnv, 10);
-    if (!Number.isNaN(parsed) && parsed > 0) {
-      finalMessageLineLimit = parsed;
-    } else {
-      console.warn("[Config] Invalid TELEGRAM_FINAL_MESSAGE_LINE_LIMIT, using default 100");
-    }
-  }
-
   console.log(
-    `[Config] Configuration loaded: allowedUsers=${allowedUserIds.length}, finalMessageLineLimit=${finalMessageLineLimit}`,
+    `[Config] Configuration loaded: allowedUsers=${allowedUserIds.length}`,
   );
 
   return {
     botToken,
     allowedUserIds,
-    finalMessageLineLimit,
-    audioTranscriptionApiKey: audioApiKey,
-    audioTranscriptionProvider: audioProvider,
   };
 }

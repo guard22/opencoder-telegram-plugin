@@ -1,29 +1,7 @@
-import { Bot, type Context, InputFile, Keyboard } from "grammy";
-import {
-  createAgentsCallbackHandler,
-  createModelsCallbackHandler,
-  createSessionsCallbackHandler,
-} from "./callbacks/index.js";
-import {
-  createAgentsCommandHandler,
-  createAudioMessageHandler,
-  createEscCommandHandler,
-  createHelpCommandHandler,
-  createMessageTextHandler,
-  createModelsCommandHandler,
-  createNewCommandHandler,
-  createProjectsCommandHandler,
-  createSessionsCommandHandler,
-  createTabCommandHandler,
-  createTodosCommandHandler,
-} from "./commands/index.js";
+import { Bot, type Context } from "grammy";
 import type { Config } from "./config.js";
-import type { GlobalStateStore } from "./global-state-store.js";
-import { createDefaultKeyboard } from "./lib/keyboard.js";
-import type { Logger } from "./lib/logger.js";
-import type { OpencodeClient } from "./lib/types.js";
-import { sendTemporaryMessage } from "./lib/utils.js";
-import { TelegramQueue } from "./services/telegram-queue.service.js";
+import type { SessionTitleService } from "./services/session-title-service.js";
+import type { OpencodeClient } from "./events/types.js";
 
 export interface TelegramBotManager {
   start(): Promise<void>;
@@ -31,8 +9,6 @@ export interface TelegramBotManager {
   sendMessage(text: string, options?: any): Promise<{ message_id: number }>;
   editMessage(messageId: number, text: string): Promise<void>;
   deleteMessage(messageId: number): Promise<void>;
-  queue: TelegramQueue;
-  sendDocument(document: string | Uint8Array, filename: string): Promise<void>;
   sendTemporaryMessage(text: string, durationMs?: number, options?: any): Promise<void>;
 }
 
@@ -47,18 +23,13 @@ function isUserAllowed(ctx: Context, allowedUserIds: number[]): boolean {
 export function createTelegramBot(
   config: Config,
   client: OpencodeClient,
-  logger: Logger,
-  globalStateStore: GlobalStateStore,
+  sessionTitleService: SessionTitleService,
 ): TelegramBotManager {
   console.log("[Bot] createTelegramBot called");
 
-  // Create a shared queue instance for rate limiting
-  const queue = new TelegramQueue(500); // 500ms between API calls
-
   if (botInstance) {
     console.log("[Bot] Reusing existing bot instance");
-    logger.warn("Bot already initialized, reusing existing instance");
-    return createBotManager(botInstance, queue, globalStateStore, logger);
+    return createBotManager(botInstance, sessionTitleService);
   }
 
   console.log("[Bot] Creating new Bot instance with token");
@@ -70,57 +41,22 @@ export function createTelegramBot(
   bot.use(async (ctx, next) => {
     if (!isUserAllowed(ctx, config.allowedUserIds)) {
       console.log(`[Bot] Unauthorized access attempt from user ${ctx.from?.id}`);
-      logger.warn("Unauthorized user attempted access", { userId: ctx.from?.id });
       return;
     }
     if (ctx.chat?.type !== "private") {
-      logger.warn("Ignoring non-private chat", {
-        chatId: ctx.chat?.id,
-        chatType: ctx.chat?.type,
-      });
       return;
     }
     if (ctx.chat?.id) {
-      globalStateStore.setActiveChatId(ctx.chat.id);
+      sessionTitleService.setActiveChatId(ctx.chat.id);
     }
     await next();
   });
 
-  // Create the manager and pass the manager into command handlers so they
-  // can use the convenience methods (createForumTopic, deleteForumTopic, getForumTopics, sendMessage, etc.)
-  const manager = createBotManager(bot, queue, globalStateStore, logger);
-
-  const commandDeps = {
-    bot: manager,
-    config,
-    client,
-    logger,
-    globalStateStore,
-    queue,
-  };
-
-  bot.command("new", createNewCommandHandler(commandDeps));
-  bot.command("projects", createProjectsCommandHandler(commandDeps));
-  bot.command("sessions", createSessionsCommandHandler(commandDeps));
-  bot.command("agents", createAgentsCommandHandler(commandDeps));
-  bot.command("models", createModelsCommandHandler(commandDeps));
-  bot.command("help", createHelpCommandHandler(commandDeps));
-  bot.command("tab", createTabCommandHandler(commandDeps));
-  bot.command("esc", createEscCommandHandler(commandDeps));
-  bot.command("todos", createTodosCommandHandler(commandDeps));
-
-  bot.on("message:text", createMessageTextHandler(commandDeps));
-  bot.on("message:voice", createAudioMessageHandler(commandDeps));
-  bot.on("message:audio", createAudioMessageHandler(commandDeps));
-
-  // Register callback query handlers
-  bot.callbackQuery(/^agent:/, createAgentsCallbackHandler(commandDeps));
-  bot.callbackQuery(/^model:/, createModelsCallbackHandler(commandDeps));
-  bot.callbackQuery(/^session:/, createSessionsCallbackHandler(commandDeps));
+  // Create the manager
+  const manager = createBotManager(bot, sessionTitleService);
 
   bot.catch((error) => {
     console.error("[Bot] Bot error caught:", error);
-    logger.error("Bot error", { error: String(error) });
   });
 
   console.log("[Bot] All handlers registered, returning bot manager");
@@ -128,14 +64,13 @@ export function createTelegramBot(
 }
 
 function requireActiveChatId(
-  globalStateStore: GlobalStateStore,
-  logger: Logger,
+  sessionTitleService: SessionTitleService,
   action: string,
 ): number {
-  const chatId = globalStateStore.getActiveChatId();
+  const chatId = sessionTitleService.getActiveChatId();
   if (!chatId) {
     const message = `No active chat available for ${action}. Ask an allowed user to message the bot first.`;
-    logger.warn(message);
+    console.warn(message);
     throw new Error(message);
   }
   return chatId;
@@ -143,9 +78,7 @@ function requireActiveChatId(
 
 function createBotManager(
   bot: Bot,
-  queue: TelegramQueue,
-  globalStateStore: GlobalStateStore,
-  logger: Logger,
+  sessionTitleService: SessionTitleService,
 ): TelegramBotManager {
   return {
     async start() {
@@ -155,12 +88,16 @@ function createBotManager(
         onStart: async () => {
           console.log("[Bot] Telegram bot polling started successfully");
           try {
-            const chatId = globalStateStore.getActiveChatId();
+            const chatId = sessionTitleService.getActiveChatId();
             if (!chatId) {
               console.log("[Bot] No active chat yet; skipping startup message");
               return;
             }
-            await sendTemporaryMessage(bot, chatId, "Messaging enabled", 1000, queue);
+            const msg = await bot.api.sendMessage(chatId, "Messaging enabled");
+            // Delete after 1 second
+            setTimeout(() => {
+              bot.api.deleteMessage(chatId, msg.message_id).catch(console.error);
+            }, 1000);
             console.log("[Bot] Startup message sent to active chat");
           } catch (error) {
             console.error("[Bot] Failed to send startup message:", error);
@@ -178,49 +115,33 @@ function createBotManager(
 
     async sendMessage(text: string, options?: any) {
       console.log(`[Bot] sendMessage: "${text.slice(0, 50)}..."`);
-      const chatId = requireActiveChatId(globalStateStore, logger, "sendMessage");
-      // Add default keyboard if no reply_markup is provided
-      const mergedOptions = {
-        ...options,
-        reply_markup: options?.reply_markup || createDefaultKeyboard(),
-      };
-      // Use queue to avoid rate limiting
-      const result = await queue.enqueue(() => bot.api.sendMessage(chatId, text, mergedOptions));
+      const chatId = requireActiveChatId(sessionTitleService, "sendMessage");
+      const result = await bot.api.sendMessage(chatId, text, options);
       return { message_id: result.message_id };
     },
 
     async editMessage(messageId: number, text: string) {
       console.log(`[Bot] editMessage ${messageId}: "${text.slice(0, 50)}..."`);
-      const chatId = requireActiveChatId(globalStateStore, logger, "editMessage");
-      // Use queue to avoid rate limiting
-      await queue.enqueue(() => bot.api.editMessageText(chatId, messageId, text));
+      const chatId = requireActiveChatId(sessionTitleService, "editMessage");
+      await bot.api.editMessageText(chatId, messageId, text);
     },
 
     async deleteMessage(messageId: number) {
       console.log(`[Bot] deleteMessage ${messageId}`);
-      const chatId = requireActiveChatId(globalStateStore, logger, "deleteMessage");
-      await queue.enqueue(() => bot.api.deleteMessage(chatId, messageId));
-    },
-
-    async sendDocument(document: string | Uint8Array, filename: string) {
-      console.log(`[Bot] sendDocument: filename="${filename}"`);
-      const chatId = requireActiveChatId(globalStateStore, logger, "sendDocument");
-      await queue.enqueue(() =>
-        bot.api.sendDocument(
-          chatId,
-          new InputFile(typeof document === "string" ? Buffer.from(document) : document, filename),
-        ),
-      );
+      const chatId = requireActiveChatId(sessionTitleService, "deleteMessage");
+      await bot.api.deleteMessage(chatId, messageId);
     },
 
     async sendTemporaryMessage(text: string, durationMs: number = 10000, options?: any) {
       console.log(
         `[Bot] sendTemporaryMessage: "${text.slice(0, 50)}..." (duration: ${durationMs}ms)`,
       );
-      const chatId = requireActiveChatId(globalStateStore, logger, "sendTemporaryMessage");
-      await sendTemporaryMessage(bot, chatId, text, durationMs, queue, options);
+      const chatId = requireActiveChatId(sessionTitleService, "sendTemporaryMessage");
+      const msg = await bot.api.sendMessage(chatId, text, options);
+      // Delete after the specified duration
+      setTimeout(() => {
+        bot.api.deleteMessage(chatId, msg.message_id).catch(console.error);
+      }, durationMs);
     },
-
-    queue,
   };
 }

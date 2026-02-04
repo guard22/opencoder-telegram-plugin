@@ -8,7 +8,7 @@ import {
   handleSessionUpdated,
 } from "./events/index.js";
 
-import { GlobalStateStore } from "./global-state-store.js";
+import { SessionTitleService } from "./services/session-title-service.js";
 
 export const TelegramRemote: Plugin = async ({ client }) => {
   console.log("[TelegramRemote] Plugin initialization started");
@@ -25,17 +25,12 @@ export const TelegramRemote: Plugin = async ({ client }) => {
     };
   }
 
-  console.log("[TelegramRemote] Creating global state store...");
-  const globalStateStore = new GlobalStateStore({
-    trackedEventTypes: [
-      "session.updated",
-      "session.status",
-    ],
-  });
+  console.log("[TelegramRemote] Creating session title service...");
+  const sessionTitleService = new SessionTitleService();
 
   console.log("[TelegramRemote] Creating Telegram bot...");
 
-  const bot = createTelegramBot(config, client, globalStateStore);
+  const bot = createTelegramBot(config, client, sessionTitleService);
   console.log("[TelegramRemote] Bot created successfully");
 
   console.log("[TelegramRemote] Starting Telegram bot polling...");
@@ -85,7 +80,7 @@ export const TelegramRemote: Plugin = async ({ client }) => {
   const eventContext: EventHandlerContext = {
     client,
     bot,
-    globalStateStore,
+    sessionTitleService,
     config,
   };
 
@@ -102,9 +97,6 @@ export const TelegramRemote: Plugin = async ({ client }) => {
 
       // Write event to debug file
       // writeEventToDebugFile(event, false, []);
-
-      // Store event in global state
-      globalStateStore.addEvent(event.type, event);
 
       const handler = eventHandlers[event.type as keyof typeof eventHandlers];
       if (handler) {
