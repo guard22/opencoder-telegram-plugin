@@ -18,7 +18,7 @@ export async function handleSessionStatus(event: any, context: EventHandlerConte
           }
         }
 
-        await context.bot.sendMessage(message);
+        await context.bot.sendLegacyMessage(message);
       } catch (error) {
         console.error("[TelegramRemote] Failed to send idle notification:");
       }

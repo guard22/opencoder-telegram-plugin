@@ -21,7 +21,7 @@ export async function handleQuestionAsked(event: any, context: EventHandlerConte
         const message = `${titleText}\n\n❓ Questions:\n${questionTexts}`;
 
         try {
-            await context.bot.sendMessage(message);
+            await context.bot.sendLegacyMessage(message);
         } catch (error) {
             console.error("[TelegramRemote] Failed to send question notification:", error);
         }
