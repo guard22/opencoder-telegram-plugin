@@ -2539,71 +2539,94 @@ var TelegramForumBridge = class {
       await this.refreshLiveProgress(binding);
       return;
     }
-    if (eventType === "permission.updated") {
-      const permission = event?.properties ?? {};
-      const sessionId = String(permission?.sessionID ?? "");
-      const permissionId = String(permission?.id ?? "");
+    if (eventType === "permission.updated" || eventType === "permission.ask" || eventType === "permission.required") {
+      const props = event?.properties ?? {};
+      const permission = props?.permission ?? props?.data?.permission ?? props;
+      const sessionId = String(
+        permission?.sessionID ?? permission?.sessionId ?? props?.sessionID ?? props?.sessionId ?? ""
+      );
+      const permissionId = String(
+        permission?.id ?? permission?.permissionID ?? permission?.permissionId ?? props?.permissionID ?? props?.permissionId ?? ""
+      );
       if (!sessionId || !permissionId) {
+        console.warn(
+          "[Bridge] Permission event missing sessionId/permissionId:",
+          eventType,
+          JSON.stringify(event?.properties ?? {})
+        );
         return;
       }
       const binding = this.store.getBySession(sessionId);
       if (!binding) {
+        console.warn(
+          `[Bridge] Permission event for unmapped session ${sessionId}: ${permissionId}`
+        );
         return;
       }
       const tracked = this.permissionMessages.get(permissionId);
       if (tracked) {
-        try {
-          await this.bot.editMessage({
-            chatId: tracked.chatId,
-            messageId: tracked.messageId,
-            text: formatPermissionMessage(permission),
-            inlineKeyboard: this.buildPermissionKeyboard(permissionId)
-          });
+        const edited = await this.editMessageWithFloodRetry({
+          chatId: tracked.chatId,
+          messageId: tracked.messageId,
+          text: formatPermissionMessage(permission),
+          inlineKeyboard: this.buildPermissionKeyboard(permissionId)
+        });
+        if (edited) {
           return;
-        } catch {
-          this.permissionMessages.delete(permissionId);
         }
+        this.permissionMessages.delete(permissionId);
       }
-      const sent = await this.bot.sendMessage({
-        chatId: binding.chatId,
-        threadId: binding.threadId,
-        text: formatPermissionMessage(permission),
-        inlineKeyboard: this.buildPermissionKeyboard(permissionId)
-      });
-      this.permissionMessages.set(permissionId, {
-        chatId: binding.chatId,
-        threadId: binding.threadId,
-        messageId: sent.message_id
-      });
+      const sentMessageId = await this.sendPermissionRequestWithRetry(
+        binding,
+        permissionId,
+        formatPermissionMessage(permission)
+      );
+      if (sentMessageId) {
+        this.permissionMessages.set(permissionId, {
+          chatId: binding.chatId,
+          threadId: binding.threadId,
+          messageId: sentMessageId
+        });
+      }
       return;
     }
     if (eventType === "permission.replied") {
       const props = event?.properties ?? {};
-      const sessionId = String(props?.sessionID ?? "");
-      const permissionId = String(props?.permissionID ?? "");
-      const response = String(props?.response ?? "");
+      const payload = props?.permission ?? props?.data?.permission ?? props;
+      const sessionId = String(
+        payload?.sessionID ?? payload?.sessionId ?? props?.sessionID ?? props?.sessionId ?? ""
+      );
+      const permissionId = String(
+        payload?.permissionID ?? payload?.permissionId ?? payload?.id ?? props?.permissionID ?? props?.permissionId ?? ""
+      );
+      const response = String(payload?.response ?? props?.response ?? "");
       if (!sessionId || !permissionId) {
+        console.warn(
+          "[Bridge] Permission reply event missing sessionId/permissionId:",
+          JSON.stringify(event?.properties ?? {})
+        );
         return;
       }
       const binding = this.store.getBySession(sessionId);
       if (!binding) {
+        console.warn(
+          `[Bridge] Permission reply for unmapped session ${sessionId}: ${permissionId}`
+        );
         return;
       }
       const tracked = this.permissionMessages.get(permissionId);
       if (tracked) {
-        try {
-          await this.bot.editMessage({
-            chatId: tracked.chatId,
-            messageId: tracked.messageId,
-            text: `Permission handled: ${permissionId}
+        const edited = await this.editMessageWithFloodRetry({
+          chatId: tracked.chatId,
+          messageId: tracked.messageId,
+          text: `Permission handled: ${permissionId}
 Response: ${response || "unknown"}`
-          });
+        });
+        if (edited) {
           this.permissionMessages.delete(permissionId);
           return;
-        } catch (error) {
-          console.error("[Bridge] Failed to edit permission message:", error);
-          this.permissionMessages.delete(permissionId);
         }
+        this.permissionMessages.delete(permissionId);
       }
       await this.sendToSessionThread(
         binding,
@@ -4197,6 +4220,72 @@ ${userText}` : ""
           )}s`
         );
         await sleep(waitMs);
+      }
+    }
+  }
+  async editMessageWithFloodRetry(params) {
+    let attemptsLeft = 2;
+    while (true) {
+      try {
+        await this.bot.editMessage({
+          chatId: params.chatId,
+          messageId: params.messageId,
+          text: params.text,
+          inlineKeyboard: params.inlineKeyboard
+        });
+        return true;
+      } catch (error) {
+        const meta = parseTelegramErrorMeta(error);
+        if (isMessageNotModifiedMeta(meta)) {
+          return true;
+        }
+        if (!isFloodMeta(meta) || attemptsLeft <= 0) {
+          console.error("[Bridge] Failed to edit permission message:", error);
+          return false;
+        }
+        attemptsLeft -= 1;
+        const waitMs = (meta.retryAfterMs ?? 1e3) + FLOOD_JITTER_MS;
+        await sleep(waitMs);
+      }
+    }
+  }
+  async sendPermissionRequestWithRetry(binding, permissionId, text) {
+    let attemptsLeft = 3;
+    while (true) {
+      try {
+        const sent = await this.bot.sendMessage({
+          chatId: binding.chatId,
+          threadId: binding.threadId,
+          text,
+          inlineKeyboard: this.buildPermissionKeyboard(permissionId)
+        });
+        return sent.message_id;
+      } catch (error) {
+        const meta = parseTelegramErrorMeta(error);
+        if (isFloodMeta(meta) && attemptsLeft > 0) {
+          attemptsLeft -= 1;
+          const waitMs = (meta.retryAfterMs ?? 1e3) + FLOOD_JITTER_MS;
+          console.warn(
+            `[Bridge] Permission send rate-limited, retry in ${Math.max(
+              1,
+              Math.ceil(waitMs / 1e3)
+            )}s`
+          );
+          await sleep(waitMs);
+          continue;
+        }
+        console.error("[Bridge] Failed to send permission message:", error);
+        try {
+          await this.sendToSessionThread(
+            binding,
+            `${text}
+
+Fallback: /oc perm ${permissionId} <once|always|reject>`
+          );
+        } catch (fallbackError) {
+          console.error("[Bridge] Failed to send permission fallback:", fallbackError);
+        }
+        return void 0;
       }
     }
   }
