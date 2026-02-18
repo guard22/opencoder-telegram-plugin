@@ -54,6 +54,10 @@ Then in Telegram forum chat:
 
 - Developer setup, deployment, operations, troubleshooting (RU):
   - [`/Users/guard2/Projects/opencoder-telegram-plugin/docs/INSTALL_AND_USAGE_RU.md`](/Users/guard2/Projects/opencoder-telegram-plugin/docs/INSTALL_AND_USAGE_RU.md)
+- 1:1 server bootstrap guide for AI agents (RU):
+  - [`/Users/guard2/Projects/opencoder-telegram-plugin/docs/AGENT_1TO1_SERVER_SETUP_RU.md`](/Users/guard2/Projects/opencoder-telegram-plugin/docs/AGENT_1TO1_SERVER_SETUP_RU.md)
+- Copy-paste autopilot prompt for agent (RU):
+  - [`/Users/guard2/Projects/opencoder-telegram-plugin/docs/AGENT_AUTODEPLOY_PROMPT_RU.md`](/Users/guard2/Projects/opencoder-telegram-plugin/docs/AGENT_AUTODEPLOY_PROMPT_RU.md)
 - AI agent engineering/incident runbook:
   - [`/Users/guard2/Projects/opencoder-telegram-plugin/AGENTS.md`](/Users/guard2/Projects/opencoder-telegram-plugin/AGENTS.md)
 
