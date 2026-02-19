@@ -52,6 +52,10 @@ export class TopicSessionStore {
     return this.state.topics.find((item) => item.sessionId === sessionId);
   }
 
+  listAll(): TopicSessionBinding[] {
+    return [...this.state.topics];
+  }
+
   listByChat(chatId: number): TopicSessionBinding[] {
     return this.state.topics.filter((item) => item.chatId === chatId);
   }

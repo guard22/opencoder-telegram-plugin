@@ -27,6 +27,12 @@ export const TelegramRemote: Plugin = async () => {
     console.error("[TelegramRemote] Failed to start Telegram bot:", error);
   });
 
+  setTimeout(() => {
+    void bridge?.recoverInterruptedSessions().catch((error) => {
+      console.error("[TelegramRemote] Restart recovery failed:", error);
+    });
+  }, 2_000);
+
   let isShuttingDown = false;
   async function shutdown(): Promise<void> {
     if (isShuttingDown) {

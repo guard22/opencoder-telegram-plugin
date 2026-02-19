@@ -20,6 +20,7 @@ export interface TopicSessionBinding {
   updatedAt: number;
   lastError?: string;
   sessionTitle?: string;
+  lastAutoResumeAt?: number;
 }
 
 export interface TopicSessionStateFile {

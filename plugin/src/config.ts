@@ -16,6 +16,7 @@ export interface Config {
   defaultModel: ModelRef;
   maxAttachmentBytes: number;
   stateFilePath: string;
+  autoContinueAfterRestart: boolean;
   opencodeBaseUrl: string;
   opencodeUsername?: string;
   opencodePassword?: string;
@@ -63,6 +64,20 @@ function parseModel(value: string | undefined): ModelRef {
   }
 
   return { providerID, modelID };
+}
+
+function parseBoolean(value: string | undefined, fallback: boolean): boolean {
+  if (!value || value.trim() === "") {
+    return fallback;
+  }
+  const normalized = value.trim().toLowerCase();
+  if (["1", "true", "yes", "on"].includes(normalized)) {
+    return true;
+  }
+  if (["0", "false", "no", "off"].includes(normalized)) {
+    return false;
+  }
+  return fallback;
 }
 
 export function loadConfig(): Config {
@@ -142,6 +157,10 @@ export function loadConfig(): Config {
     defaultModel: parseModel(process.env.TELEGRAM_OPENCODE_MODEL),
     maxAttachmentBytes,
     stateFilePath,
+    autoContinueAfterRestart: parseBoolean(
+      process.env.TELEGRAM_AUTOCONTINUE_ON_RESTART,
+      true,
+    ),
     opencodeBaseUrl,
     opencodeUsername: hasUsername ? opencodeUsername : undefined,
     opencodePassword: hasPassword ? opencodePassword : undefined,

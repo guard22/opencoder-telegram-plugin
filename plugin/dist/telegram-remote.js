@@ -1947,6 +1947,9 @@ var TopicSessionStore = class {
   getBySession(sessionId) {
     return this.state.topics.find((item) => item.sessionId === sessionId);
   }
+  listAll() {
+    return [...this.state.topics];
+  }
   listByChat(chatId) {
     return this.state.topics.filter((item) => item.chatId === chatId);
   }
@@ -2059,6 +2062,9 @@ var TOPIC_RENAME_MIN_MS = 5e3;
 var FLOOD_JITTER_MS = 250;
 var DEFAULT_REASONING_EFFORT = "high";
 var PROMPT_COALESCE_MS = 1500;
+var AUTO_CONTINUE_PROMPT = "continue";
+var AUTO_CONTINUE_RECENT_MS = 2 * 6e4;
+var AUTO_CONTINUE_STAGGER_MS = 3e3;
 function truncateTopicName(value) {
   if (value.length <= 120) {
     return value;
@@ -2445,6 +2451,63 @@ var TelegramForumBridge = class {
     this.clientFactory = new AuthenticatedOpencodeClientFactory(config);
     this.bot = bot;
     this.store = new TopicSessionStore(config.stateFilePath);
+  }
+  async recoverInterruptedSessions() {
+    if (!this.config.autoContinueAfterRestart) {
+      return;
+    }
+    const candidates = this.store.listAll().filter((binding) => binding.state === "active");
+    if (candidates.length === 0) {
+      return;
+    }
+    let sessionIds = /* @__PURE__ */ new Set();
+    try {
+      const sessions = await this.collectSessions();
+      sessionIds = new Set(sessions.map((item) => item.id));
+    } catch (error) {
+      console.error("[Bridge] Failed to collect sessions for restart recovery:", error);
+    }
+    for (const binding of candidates) {
+      try {
+        const now = Date.now();
+        const lastAutoResumeAt = Number(binding.lastAutoResumeAt ?? 0);
+        if (lastAutoResumeAt > 0 && now - lastAutoResumeAt < AUTO_CONTINUE_RECENT_MS) {
+          continue;
+        }
+        if (sessionIds.size > 0 && !sessionIds.has(binding.sessionId)) {
+          const patched2 = this.store.patchBySession(binding.sessionId, {
+            state: "error",
+            lastError: "Session not found after restart; auto-continue skipped."
+          });
+          if (patched2) {
+            await this.updateTopicName(patched2);
+            await this.sendToSessionThread(
+              patched2,
+              "Detected OpenCode restart, but this session ID is no longer available. Use /oc import list or create a new session."
+            );
+          }
+          continue;
+        }
+        const patched = this.store.patchBySession(binding.sessionId, {
+          state: "active",
+          lastError: void 0,
+          lastAutoResumeAt: now
+        }) ?? binding;
+        await this.updateTopicName(patched);
+        await this.enqueuePrompt(patched, {
+          sourceMessageId: 0,
+          userId: patched.createdBy,
+          createdAt: Date.now(),
+          parts: [{ type: "text", text: AUTO_CONTINUE_PROMPT }]
+        });
+        await sleep(AUTO_CONTINUE_STAGGER_MS);
+      } catch (error) {
+        console.error(
+          `[Bridge] Failed to auto-continue session ${binding.sessionId} after restart:`,
+          error
+        );
+      }
+    }
   }
   async handleInboundMessage(message) {
     const key = `${message.chatId}:${message.threadId ?? 0}`;
@@ -4364,6 +4427,19 @@ function parseModel(value) {
   }
   return { providerID, modelID };
 }
+function parseBoolean(value, fallback) {
+  if (!value || value.trim() === "") {
+    return fallback;
+  }
+  const normalized = value.trim().toLowerCase();
+  if (["1", "true", "yes", "on"].includes(normalized)) {
+    return true;
+  }
+  if (["0", "false", "no", "off"].includes(normalized)) {
+    return false;
+  }
+  return fallback;
+}
 function loadConfig() {
   const botToken = process.env.TELEGRAM_BOT_TOKEN;
   if (!botToken || botToken.trim() === "") {
@@ -4414,6 +4490,10 @@ function loadConfig() {
     defaultModel: parseModel(process.env.TELEGRAM_OPENCODE_MODEL),
     maxAttachmentBytes,
     stateFilePath,
+    autoContinueAfterRestart: parseBoolean(
+      process.env.TELEGRAM_AUTOCONTINUE_ON_RESTART,
+      true
+    ),
     opencodeBaseUrl,
     opencodeUsername: hasUsername ? opencodeUsername : void 0,
     opencodePassword: hasPassword ? opencodePassword : void 0
@@ -4443,6 +4523,11 @@ var TelegramRemote = async () => {
   bot.start().catch((error) => {
     console.error("[TelegramRemote] Failed to start Telegram bot:", error);
   });
+  setTimeout(() => {
+    void bridge?.recoverInterruptedSessions().catch((error) => {
+      console.error("[TelegramRemote] Restart recovery failed:", error);
+    });
+  }, 2e3);
   let isShuttingDown = false;
   async function shutdown() {
     if (isShuttingDown) {

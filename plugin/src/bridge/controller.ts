@@ -53,6 +53,9 @@ const TOPIC_RENAME_MIN_MS = 5_000;
 const FLOOD_JITTER_MS = 250;
 const DEFAULT_REASONING_EFFORT = "high";
 const PROMPT_COALESCE_MS = 1_500;
+const AUTO_CONTINUE_PROMPT = "continue";
+const AUTO_CONTINUE_RECENT_MS = 2 * 60_000;
+const AUTO_CONTINUE_STAGGER_MS = 3_000;
 
 function truncateTopicName(value: string): string {
   if (value.length <= 120) {
@@ -576,6 +579,74 @@ export class TelegramForumBridge {
     this.clientFactory = new AuthenticatedOpencodeClientFactory(config);
     this.bot = bot;
     this.store = new TopicSessionStore(config.stateFilePath);
+  }
+
+  async recoverInterruptedSessions(): Promise<void> {
+    if (!this.config.autoContinueAfterRestart) {
+      return;
+    }
+
+    const candidates = this.store
+      .listAll()
+      .filter((binding) => binding.state === "active");
+    if (candidates.length === 0) {
+      return;
+    }
+
+    let sessionIds = new Set<string>();
+    try {
+      const sessions = await this.collectSessions();
+      sessionIds = new Set(sessions.map((item) => item.id));
+    } catch (error) {
+      console.error("[Bridge] Failed to collect sessions for restart recovery:", error);
+    }
+
+    for (const binding of candidates) {
+      try {
+        const now = Date.now();
+        const lastAutoResumeAt = Number(binding.lastAutoResumeAt ?? 0);
+        if (lastAutoResumeAt > 0 && now - lastAutoResumeAt < AUTO_CONTINUE_RECENT_MS) {
+          continue;
+        }
+
+        if (sessionIds.size > 0 && !sessionIds.has(binding.sessionId)) {
+          const patched = this.store.patchBySession(binding.sessionId, {
+            state: "error",
+            lastError: "Session not found after restart; auto-continue skipped.",
+          });
+          if (patched) {
+            await this.updateTopicName(patched);
+            await this.sendToSessionThread(
+              patched,
+              "Detected OpenCode restart, but this session ID is no longer available. Use /oc import list or create a new session.",
+            );
+          }
+          continue;
+        }
+
+        const patched = this.store.patchBySession(binding.sessionId, {
+          state: "active",
+          lastError: undefined,
+          lastAutoResumeAt: now,
+        }) ?? binding;
+
+        await this.updateTopicName(patched);
+
+        await this.enqueuePrompt(patched, {
+          sourceMessageId: 0,
+          userId: patched.createdBy,
+          createdAt: Date.now(),
+          parts: [{ type: "text", text: AUTO_CONTINUE_PROMPT }],
+        });
+
+        await sleep(AUTO_CONTINUE_STAGGER_MS);
+      } catch (error) {
+        console.error(
+          `[Bridge] Failed to auto-continue session ${binding.sessionId} after restart:`,
+          error,
+        );
+      }
+    }
   }
 
   async handleInboundMessage(message: InboundTelegramMessage): Promise<void> {
