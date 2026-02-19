@@ -2055,9 +2055,9 @@ function safeErrorMessage(error) {
 
 // src/bridge/controller.ts
 var EMPTY_ASSISTANT_OUTPUT = "Assistant finished without final text output.";
-var LIVE_PROGRESS_TICK_MS = 3e3;
-var LIVE_PROGRESS_MIN_EDIT_MS = 2500;
-var LIVE_PROGRESS_MIN_SEND_MS = 1200;
+var LIVE_PROGRESS_TICK_MS = 8e3;
+var LIVE_PROGRESS_MIN_EDIT_MS = 8e3;
+var LIVE_PROGRESS_MIN_SEND_MS = 5e3;
 var TOPIC_RENAME_MIN_MS = 5e3;
 var FLOOD_JITTER_MS = 250;
 var DEFAULT_REASONING_EFFORT = "high";
@@ -2065,6 +2065,7 @@ var PROMPT_COALESCE_MS = 1500;
 var AUTO_CONTINUE_PROMPT = "continue";
 var AUTO_CONTINUE_RECENT_MS = 2 * 6e4;
 var AUTO_CONTINUE_STAGGER_MS = 3e3;
+var PROMPT_TIMEOUT_TAG = "__PROMPT_TIMEOUT__";
 function truncateTopicName(value) {
   if (value.length <= 120) {
     return value;
@@ -3615,15 +3616,13 @@ ${userText}` : ""
     this.startLiveProgress(binding);
     await this.refreshLiveProgress(binding);
     try {
-      const response = await this.expectData(
-        this.getClient(binding.workspacePath).session.prompt({
-          path: { id: binding.sessionId },
-          body: {
-            model: effectiveModel,
-            system: systemPreferences,
-            parts: bodyParts
-          }
-        })
+      const response = await this.requestPromptWithTimeout(
+        binding,
+        {
+          model: effectiveModel,
+          system: systemPreferences,
+          parts: bodyParts
+        }
       );
       const responseError = response?.info?.error;
       if (responseError) {
@@ -3675,7 +3674,7 @@ ${userText}` : ""
         void this.dispatchPrompt(binding, next);
       }
     } catch (error) {
-      const errorText = safeErrorMessage(error);
+      const errorText = this.normalizePromptError(error);
       if (runtime.lastPrompt && !runtime.retriedAfterCompaction && detectContextOverflow(errorText)) {
         runtime.retriedAfterCompaction = true;
         runtime.liveStage = "context overflow";
@@ -4394,6 +4393,54 @@ Fallback: /oc perm ${permissionId} <once|always|reject>`
       throw new Error(parseErrorPayload(result.error));
     }
   }
+  normalizePromptError(error) {
+    const raw = safeErrorMessage(error);
+    if (!raw.startsWith(PROMPT_TIMEOUT_TAG)) {
+      return raw;
+    }
+    const msRaw = Number.parseInt(raw.slice(PROMPT_TIMEOUT_TAG.length), 10);
+    const seconds = Number.isFinite(msRaw) && msRaw > 0 ? Math.max(1, Math.round(msRaw / 1e3)) : Math.max(1, Math.round(this.config.promptTimeoutMs / 1e3));
+    return `Prompt timed out after ${seconds}s and was aborted.`;
+  }
+  async requestPromptWithTimeout(binding, body) {
+    const promptPromise = this.expectData(
+      this.getClient(binding.workspacePath).session.prompt({
+        path: { id: binding.sessionId },
+        body
+      })
+    );
+    const timeoutMs = this.config.promptTimeoutMs;
+    if (!Number.isFinite(timeoutMs) || timeoutMs <= 0) {
+      return promptPromise;
+    }
+    let timer;
+    try {
+      const timeoutPromise = new Promise((_resolve, reject) => {
+        timer = setTimeout(() => {
+          reject(new Error(`${PROMPT_TIMEOUT_TAG}${timeoutMs}`));
+        }, timeoutMs);
+      });
+      return await Promise.race([promptPromise, timeoutPromise]);
+    } catch (error) {
+      const errorText = safeErrorMessage(error);
+      if (errorText.startsWith(PROMPT_TIMEOUT_TAG)) {
+        try {
+          await this.expectOk(
+            this.getClient(binding.workspacePath).session.abort({
+              path: { id: binding.sessionId }
+            })
+          );
+        } catch (abortError) {
+          console.error("[Bridge] Failed to abort timed out session:", abortError);
+        }
+      }
+      throw error;
+    } finally {
+      if (timer) {
+        clearTimeout(timer);
+      }
+    }
+  }
 };
 
 // src/config.ts
@@ -4439,6 +4486,16 @@ function parseBoolean(value, fallback) {
     return false;
   }
   return fallback;
+}
+function parsePositiveInt(value, fallback) {
+  if (!value || value.trim() === "") {
+    return fallback;
+  }
+  const parsed = Number.parseInt(value.trim(), 10);
+  if (!Number.isFinite(parsed) || parsed <= 0) {
+    return fallback;
+  }
+  return parsed;
 }
 function loadConfig() {
   const botToken = process.env.TELEGRAM_BOT_TOKEN;
@@ -4489,6 +4546,7 @@ function loadConfig() {
     allowedWorkspaceRoots,
     defaultModel: parseModel(process.env.TELEGRAM_OPENCODE_MODEL),
     maxAttachmentBytes,
+    promptTimeoutMs: parsePositiveInt(process.env.TELEGRAM_PROMPT_TIMEOUT_MS, 6e5),
     stateFilePath,
     autoContinueAfterRestart: parseBoolean(
       process.env.TELEGRAM_AUTOCONTINUE_ON_RESTART,

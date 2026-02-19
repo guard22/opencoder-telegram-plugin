@@ -15,6 +15,7 @@ export interface Config {
   allowedWorkspaceRoots: string[];
   defaultModel: ModelRef;
   maxAttachmentBytes: number;
+  promptTimeoutMs: number;
   stateFilePath: string;
   autoContinueAfterRestart: boolean;
   opencodeBaseUrl: string;
@@ -78,6 +79,17 @@ function parseBoolean(value: string | undefined, fallback: boolean): boolean {
     return false;
   }
   return fallback;
+}
+
+function parsePositiveInt(value: string | undefined, fallback: number): number {
+  if (!value || value.trim() === "") {
+    return fallback;
+  }
+  const parsed = Number.parseInt(value.trim(), 10);
+  if (!Number.isFinite(parsed) || parsed <= 0) {
+    return fallback;
+  }
+  return parsed;
 }
 
 export function loadConfig(): Config {
@@ -156,6 +168,7 @@ export function loadConfig(): Config {
     allowedWorkspaceRoots,
     defaultModel: parseModel(process.env.TELEGRAM_OPENCODE_MODEL),
     maxAttachmentBytes,
+    promptTimeoutMs: parsePositiveInt(process.env.TELEGRAM_PROMPT_TIMEOUT_MS, 600_000),
     stateFilePath,
     autoContinueAfterRestart: parseBoolean(
       process.env.TELEGRAM_AUTOCONTINUE_ON_RESTART,

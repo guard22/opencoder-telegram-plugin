@@ -4,6 +4,7 @@ import type {
   FilePart,
   Session,
   SessionMessagesResponses,
+  SessionPromptData,
   SessionPromptResponses,
   TextPart,
 } from "@opencode-ai/sdk";
@@ -46,9 +47,9 @@ interface SessionListItem {
 
 type InlineKeyboard = Array<Array<{ text: string; callbackData: string }>>;
 const EMPTY_ASSISTANT_OUTPUT = "Assistant finished without final text output.";
-const LIVE_PROGRESS_TICK_MS = 3_000;
-const LIVE_PROGRESS_MIN_EDIT_MS = 2_500;
-const LIVE_PROGRESS_MIN_SEND_MS = 1_200;
+const LIVE_PROGRESS_TICK_MS = 8_000;
+const LIVE_PROGRESS_MIN_EDIT_MS = 8_000;
+const LIVE_PROGRESS_MIN_SEND_MS = 5_000;
 const TOPIC_RENAME_MIN_MS = 5_000;
 const FLOOD_JITTER_MS = 250;
 const DEFAULT_REASONING_EFFORT = "high";
@@ -56,6 +57,7 @@ const PROMPT_COALESCE_MS = 1_500;
 const AUTO_CONTINUE_PROMPT = "continue";
 const AUTO_CONTINUE_RECENT_MS = 2 * 60_000;
 const AUTO_CONTINUE_STAGGER_MS = 3_000;
+const PROMPT_TIMEOUT_TAG = "__PROMPT_TIMEOUT__";
 
 function truncateTopicName(value: string): string {
   if (value.length <= 120) {
@@ -1979,15 +1981,13 @@ export class TelegramForumBridge {
     await this.refreshLiveProgress(binding);
 
     try {
-      const response = await this.expectData<SessionPromptResponses[200]>(
-        this.getClient(binding.workspacePath).session.prompt({
-          path: { id: binding.sessionId },
-          body: {
-            model: effectiveModel,
-            system: systemPreferences,
-            parts: bodyParts,
-          },
-        }),
+      const response = await this.requestPromptWithTimeout(
+        binding,
+        {
+          model: effectiveModel,
+          system: systemPreferences,
+          parts: bodyParts,
+        },
       );
       const responseError = (response as any)?.info?.error;
       if (responseError) {
@@ -2052,7 +2052,7 @@ export class TelegramForumBridge {
         void this.dispatchPrompt(binding, next);
       }
     } catch (error) {
-      const errorText = safeErrorMessage(error);
+      const errorText = this.normalizePromptError(error);
 
       if (
         runtime.lastPrompt &&
@@ -2881,6 +2881,63 @@ export class TelegramForumBridge {
     const result = await resultPromise;
     if (result?.error) {
       throw new Error(parseErrorPayload(result.error));
+    }
+  }
+
+  private normalizePromptError(error: unknown): string {
+    const raw = safeErrorMessage(error);
+    if (!raw.startsWith(PROMPT_TIMEOUT_TAG)) {
+      return raw;
+    }
+    const msRaw = Number.parseInt(raw.slice(PROMPT_TIMEOUT_TAG.length), 10);
+    const seconds = Number.isFinite(msRaw) && msRaw > 0
+      ? Math.max(1, Math.round(msRaw / 1000))
+      : Math.max(1, Math.round(this.config.promptTimeoutMs / 1000));
+    return `Prompt timed out after ${seconds}s and was aborted.`;
+  }
+
+  private async requestPromptWithTimeout(
+    binding: TopicSessionBinding,
+    body: SessionPromptData["body"],
+  ): Promise<SessionPromptResponses[200]> {
+    const promptPromise = this.expectData<SessionPromptResponses[200]>(
+      this.getClient(binding.workspacePath).session.prompt({
+        path: { id: binding.sessionId },
+        body,
+      }),
+    );
+
+    const timeoutMs = this.config.promptTimeoutMs;
+    if (!Number.isFinite(timeoutMs) || timeoutMs <= 0) {
+      return promptPromise;
+    }
+
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    try {
+      const timeoutPromise = new Promise<SessionPromptResponses[200]>((_resolve, reject) => {
+        timer = setTimeout(() => {
+          reject(new Error(`${PROMPT_TIMEOUT_TAG}${timeoutMs}`));
+        }, timeoutMs);
+      });
+      return await Promise.race([promptPromise, timeoutPromise]);
+    } catch (error) {
+      const errorText = safeErrorMessage(error);
+      if (errorText.startsWith(PROMPT_TIMEOUT_TAG)) {
+        try {
+          await this.expectOk(
+            this.getClient(binding.workspacePath).session.abort({
+              path: { id: binding.sessionId },
+            }),
+          );
+        } catch (abortError) {
+          console.error("[Bridge] Failed to abort timed out session:", abortError);
+        }
+      }
+      throw error;
+    } finally {
+      if (timer) {
+        clearTimeout(timer);
+      }
     }
   }
 }
